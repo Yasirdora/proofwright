@@ -18,7 +18,9 @@ need from you** — and every finding links to its file and line.
 |---|---|---|
 | M0 | Proofwright Shop — the demo app, its planted bugs, a "colleague's" weak tests | done |
 | M1a | The MCP server with `review` and `test_data` | done |
-| Next | Re-scoped to build on Playwright's own agents instead of duplicating them — a proposal awaiting the owner's sign-off ([DECISIONS.md](docs/DECISIONS.md)) | — |
+| M1b | `approve_plan` and the `/proofwright` prompt — on Playwright's own planner and generator | — |
+| M2 | `explain` and `report` — on Playwright's runner and its evidence | — |
+| M3 | `prove` — on any Playwright test | — |
 
 Not published anywhere; local only.
 

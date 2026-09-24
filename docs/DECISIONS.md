@@ -51,7 +51,8 @@ MCP server (`planner_save_plan`, `generator_write_test`, `test_run`,
 Proofwright: its instructions say to fix "assertions and expected values", not
 to ask the user, and to "do the most reasonable thing possible to pass the
 test". The owner agreed to re-scope Proofwright as the trust layer on top of
-those agents; the spec change is proposed separately, for the owner's sign-off.
+those agents; the spec (docs/SPEC.md §1–3, §5, §6, §8–10) was re-scoped
+accordingly on the owner's yes to the diff.
 
 ## 2026-09-24 · `review` reuses eslint-plugin-playwright for the rules it has
 
