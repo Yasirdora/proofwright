@@ -49,3 +49,9 @@ test("project: a broken config is reported plainly", () => {
   assert.throws(() => new Project(tempProject({ ignore: "all" })), /"ignore" must be a list/);
   assert.throws(() => new Project(path.join(os.tmpdir(), "no-such-folder-proofwright")), /doesn't exist/);
 });
+
+test("project: the config can name the Playwright project, seed test and tests folder for the agents", () => {
+  const p = new Project(tempProject({ ignore: [], project: "e2e", seed: "tests/seed.spec.ts", testsDir: "tests/generated" }));
+  assert.deepEqual(p.config, { ignore: [], project: "e2e", seed: "tests/seed.spec.ts", testsDir: "tests/generated" });
+  assert.throws(() => new Project(tempProject({ seed: 42 })), /"seed" must be a path/);
+});

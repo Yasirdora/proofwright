@@ -3,10 +3,12 @@
  * proofwright — the command line.
  *
  *   proofwright mcp [--root DIR]                     start the MCP server on stdio
+ *   proofwright init [--yes] [--root DIR]            set a Playwright project up
  *   proofwright review [PATH ...] [--root DIR] [--json]
  *   proofwright --version | --help
  */
 import { renderAnswer } from "./answer.js";
+import { init } from "./init.js";
 import { VERSION, serveStdio } from "./mcp/server.js";
 import { Project, ProjectError } from "./project.js";
 import { review } from "./review/review.js";
@@ -15,6 +17,9 @@ const USAGE = `Proofwright ${VERSION} — works with a human tester on Playwrigh
 
 Usage:
   proofwright mcp [--root DIR]                       Start the MCP server (stdio)
+  proofwright init [--yes] [--root DIR]              Set a Playwright project up: Playwright's
+                                                     agents, Proofwright's MCP server, its config.
+                                                     Shows the changes; makes them only with --yes
   proofwright review [PATH ...] [--root DIR] [--json]
                                                      Review test scripts against the rules
   proofwright --version                              Print the version
@@ -54,6 +59,11 @@ async function main(argv: string[]): Promise<number> {
     case "mcp":
       await serveStdio(root);
       return -1; // keep running
+    case "init": {
+      const answer = init(new Project(root), flag("--yes"));
+      process.stdout.write(renderAnswer(answer));
+      return 0;
+    }
     case "review": {
       const json = flag("--json");
       const answer = review(new Project(root), args);

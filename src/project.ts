@@ -17,6 +17,12 @@ const CONFIG_FILE = path.join(STATE_DIR, "config.json");
 export interface ProjectConfig {
   /** Globs (project-relative, forward slashes) Proofwright never reads. */
   ignore: string[];
+  /** The Playwright project the planner and generator run the seed test in. */
+  project?: string;
+  /** The seed test Playwright's planner and generator start from. */
+  seed?: string;
+  /** Where Playwright's generator should write the tests. */
+  testsDir?: string;
 }
 
 export class ProjectError extends Error {}
@@ -80,7 +86,14 @@ function readConfig(root: string): ProjectConfig {
   if (!Array.isArray(ignore) || ignore.some((g) => typeof g !== "string")) {
     throw new ProjectError(`${CONFIG_FILE}: "ignore" must be a list of path patterns.`);
   }
-  return { ignore };
+  const out: ProjectConfig = { ignore };
+  for (const key of ["project", "seed", "testsDir"] as const) {
+    const v = (raw as Record<string, unknown>)[key];
+    if (v === undefined) continue;
+    if (typeof v !== "string" || !v.trim()) throw new ProjectError(`${CONFIG_FILE}: "${key}" must be a path.`);
+    out[key] = v;
+  }
+  return out;
 }
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "test-results", "playwright-report", "blob-report"]);

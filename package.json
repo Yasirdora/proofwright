@@ -17,6 +17,7 @@
     "test:unit": "npm run build && node --test dist/test/*.test.js",
     "test:demo": "playwright test --project=shop --project=answer-key",
     "test:colleague": "playwright test --project=colleague",
+    "test:generated": "playwright test --project=generated",
     "shop": "node demo/shop/server.mjs"
   },
   "dependencies": {

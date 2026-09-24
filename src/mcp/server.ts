@@ -3,15 +3,23 @@
  * format (answer.ts) as text for the tester, with the same result as
  * structured content for the client.
  *
- * Tools in v0.1 M1a: `review`, `test_data`.
+ * Tools: `review`, `test_data` (M1a), `approve_plan` (M1b). Prompt:
+ * `proofwright` — the guided session over Playwright's own agents.
  */
 import * as fs from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { type Answer, renderAnswer } from "../answer.js";
 import { CHARACTER_KINDS, DataError, FIELD_KINDS, type FieldSpec } from "../data/generate.js";
 import { testData } from "../data/tool.js";
+import { approvePlan, type AskTester } from "../plan/tool.js";
+import { PROMPTS, renderPrompt } from "./prompts.js";
 import { Project, ProjectError } from "../project.js";
 import { review } from "../review/review.js";
 
@@ -21,7 +29,8 @@ export const VERSION: string = JSON.parse(
 
 const INSTRUCTIONS = `Proofwright works with a human tester on Playwright tests.
 Every tool answers in three parts — What I did, What I found, What I need from you — show the tester that answer as it is, and put the questions in "What I need from you" to them rather than answering them yourself.
-Never change what a test expects, and never mark anything approved, without the tester's explicit yes.`;
+Never change what a test expects, and never mark anything approved, without the tester's explicit yes: pass approve_plan the tester's own words, exactly as they said them — never your own.
+Playwright's own agents explore, write and run (the playwright-test-planner and playwright-test-generator); Proofwright doesn't replace them. Never use the playwright-test-healer: it changes what tests expect to make them pass.`;
 
 const ROOT_PROPERTY = {
   type: "string",
@@ -33,7 +42,7 @@ interface Tool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  run: (project: Project, args: Record<string, unknown>) => Answer;
+  run: (project: Project, args: Record<string, unknown>, ask?: AskTester) => Answer | Promise<Answer>;
 }
 
 const TOOLS: Tool[] = [
@@ -122,13 +131,86 @@ const TOOLS: Tool[] = [
       });
     },
   },
+  {
+    name: "approve_plan",
+    description:
+      "Turn the test plan Playwright's planner saved (specs/*.md) into numbered test cases the tester reads — Action · Data · Expected result — list what's open (a case that checks nothing can't be approved; unclear steps are questions), and record the tester's approval, case by case. Only approved cases go on, in a plan of their own for Playwright's generator (specs/<name>.approved.md). Call it without `approve` to show the cases; call it again with `approve` once the tester has said yes. Approval is the tester's: Proofwright asks them directly when this app can show a form; otherwise pass their exact words in `words`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        plan: { type: "string", description: "The plan Playwright's planner saved, relative to the project, e.g. specs/coupons.plan.md." },
+        request: { type: "string", description: "The tester's request, in their own words — kept with the test cases." },
+        approve: {
+          type: "array",
+          items: { type: "string" },
+          description: 'Case numbers the tester approved, e.g. ["TC-001", "TC-003"], or ["all"].',
+        },
+        words: {
+          type: "string",
+          description: "The tester's own words of approval, exactly as they said them. Needed only when this app can't show Proofwright's approval form.",
+        },
+        root: ROOT_PROPERTY,
+      },
+      required: ["plan"],
+      additionalProperties: false,
+    },
+    run: (project, args, ask) => {
+      const plan = optional(args.plan, "string", "plan");
+      if (!plan) throw new ProjectError("plan is required: the path of the plan Playwright's planner saved.");
+      return approvePlan(
+        project,
+        {
+          plan,
+          request: optional(args.request, "string", "request"),
+          approve: args.approve === undefined ? undefined : stringList(args.approve, "approve"),
+          words: optional(args.words, "string", "words"),
+        },
+        ask,
+      );
+    },
+  },
 ];
 
 export function createServer(defaultRoot: string): Server {
   const server = new Server(
     { name: "proofwright", version: VERSION },
-    { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
+    { capabilities: { tools: {}, prompts: {} }, instructions: INSTRUCTIONS },
   );
+
+  /** Ask the tester directly, when the client can show a form (MCP elicitation). */
+  const askTester = (): AskTester | undefined => {
+    if (!server.getClientCapabilities()?.elicitation) return undefined;
+    return async (message) => {
+      const result = await server.elicitInput({
+        message,
+        requestedSchema: {
+          type: "object",
+          properties: {
+            approve: { type: "boolean", title: "Approve these test cases as written?", default: false },
+            words: { type: "string", title: "Anything to add? (optional)" },
+          },
+          required: ["approve"],
+        },
+      });
+      if (result.action !== "accept" || result.content?.approve !== true) return null;
+      const note = typeof result.content?.words === "string" ? result.content.words.trim() : "";
+      return { words: note || "Approved in Proofwright's form." };
+    };
+  };
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map(({ name, description, arguments: args }) => ({ name, description, arguments: args })),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    let project: Project | undefined;
+    try {
+      project = new Project(defaultRoot);
+    } catch {
+      project = undefined; // the prompt still works without the project's settings
+    }
+    return renderPrompt(request.params.name, request.params.arguments ?? {}, project);
+  });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
@@ -140,7 +222,7 @@ export function createServer(defaultRoot: string): Server {
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     try {
       const project = new Project(optional(args.root, "string", "root") ?? defaultRoot);
-      const answer = tool.run(project, args);
+      const answer = await tool.run(project, args, askTester());
       return {
         content: [{ type: "text", text: renderAnswer(answer) }],
         structuredContent: {

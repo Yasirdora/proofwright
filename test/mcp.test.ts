@@ -9,12 +9,24 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { renderPlan } from "../src/plan/playwright-plan.js";
+import { COUPONS } from "./fixtures.js";
 
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const CLI = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
-async function connect(root: string) {
-  const client = new Client({ name: "proofwright-test", version: "0.0.0" });
+async function connect(root: string, withForm?: (message: string) => { approve: boolean; words?: string } | null) {
+  const client = new Client(
+    { name: "proofwright-test", version: "0.0.0" },
+    withForm ? { capabilities: { elicitation: {} } } : {},
+  );
+  if (withForm) {
+    client.setRequestHandler(ElicitRequestSchema, async (req) => {
+      const answer = withForm((req.params as { message: string }).message);
+      return answer ? { action: "accept", content: answer } : { action: "decline" };
+    });
+  }
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, "mcp", "--root", root] }));
   return client;
 }
@@ -22,11 +34,11 @@ async function connect(root: string) {
 const text = (r: unknown) => (r as { content: Array<{ text: string }> }).content.map((c) => c.text).join("\n");
 const isError = (r: unknown) => (r as { isError?: boolean }).isError === true;
 
-test("mcp: offers review and test_data, with schemas and instructions", async () => {
+test("mcp: offers review, test_data and approve_plan, with schemas and instructions", async () => {
   const client = await connect(REPO);
   try {
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((t) => t.name).sort(), ["review", "test_data"]);
+    assert.deepEqual(tools.map((t) => t.name).sort(), ["approve_plan", "review", "test_data"]);
     for (const t of tools) assert.ok(t.description && t.description.length > 80 && t.inputSchema.type === "object");
     assert.match(client.getInstructions() ?? "", /What I did, What I found, What I need from you/);
     assert.equal(client.getServerVersion()?.name, "proofwright");
@@ -85,6 +97,86 @@ test("mcp: bad input is an error with a plain reason, never a crash", async () =
     assert.ok(isError(unknown));
     // The server is still answering.
     assert.ok(!isError(await client.callTool({ name: "review", arguments: { paths: ["demo/tests"] } })));
+  } finally {
+    await client.close();
+  }
+});
+
+function planProject(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-mcp-plan-"));
+  fs.mkdirSync(path.join(dir, "specs"));
+  fs.writeFileSync(path.join(dir, "specs/coupons.plan.md"), renderPlan(COUPONS));
+  return dir;
+}
+
+test("mcp: approve_plan in an app that can't show a form needs the tester's words", async () => {
+  const dir = planProject();
+  const client = await connect(dir);
+  try {
+    const shown = await client.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md" } });
+    assert.ok(!isError(shown), text(shown));
+    assert.match(text(shown), /^\*\*3 test cases from Playwright's plan/);
+    const noWords = await client.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md", approve: ["TC-001"] } });
+    assert.ok(isError(noWords));
+    assert.match(text(noWords), /tester's own words/);
+    const ok = await client.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md", approve: ["TC-001"], words: "yes, TC-001" } });
+    assert.ok(!isError(ok), text(ok));
+    assert.match(fs.readFileSync(path.join(dir, "proofwright/cases/coupons.md"), "utf8"), /relayed by the AI client/);
+  } finally {
+    await client.close();
+  }
+});
+
+test("mcp: approve_plan asks the tester directly when the app can show a form", async () => {
+  const dir = planProject();
+  let shownToTester = "";
+  const client = await connect(dir, (message) => ((shownToTester = message), { approve: true, words: "looks right" }));
+  try {
+    const r = await client.callTool({
+      name: "approve_plan",
+      arguments: { plan: "specs/coupons.plan.md", approve: ["all"], words: "the AI approves" },
+    });
+    assert.ok(!isError(r), text(r));
+    assert.match(shownToTester, /Proofwright: approve 2 test cases/);
+    const cases = fs.readFileSync(path.join(dir, "proofwright/cases/coupons.md"), "utf8");
+    assert.match(cases, /"looks right" \(asked you directly\)/);
+    assert.doesNotMatch(cases, /the AI approves/);
+  } finally {
+    await client.close();
+  }
+  const declined = await connect(planProject(), () => null);
+  try {
+    const r = await declined.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md", approve: ["TC-001"] } });
+    assert.ok(!isError(r), text(r));
+    assert.match(text(r), /you didn't, so nothing was approved/);
+  } finally {
+    await declined.close();
+  }
+});
+
+test("mcp: the proofwright prompt turns one sentence into the guided session", async () => {
+  const client = await connect(REPO);
+  try {
+    const { prompts } = await client.listPrompts();
+    assert.deepEqual(prompts.map((p) => p.name), ["proofwright"]);
+    const p = await client.getPrompt({ name: "proofwright", arguments: { request: "check that coupon codes work at checkout" } });
+    const body = (p.messages[0].content as { text: string }).text;
+    for (const needle of [
+      "playwright-test-planner",
+      "specs/coupon-codes-work-checkout.plan.md",
+      "approve_plan",
+      "their exact words",
+      "playwright-test-generator",
+      "specs/coupon-codes-work-checkout.approved.md",
+      "review",
+      "Never use the playwright-test-healer",
+      // this repository's proofwright/config.json
+      'project "generated" and seed file "demo/generated/seed.spec.ts"',
+      "under `demo/generated/`",
+    ]) {
+      assert.ok(body.includes(needle), needle);
+    }
+    await assert.rejects(() => client.getPrompt({ name: "proofwright", arguments: { request: " " } }));
   } finally {
     await client.close();
   }

@@ -118,3 +118,54 @@ now counts only if it really imports `@playwright/test` (or `playwright/test`),
 itself or through a local module such as a fixtures file — read with the
 TypeScript compiler's import scanner, so text inside strings never counts. The
 rest are left out, and named in the answer.
+
+## 2026-09-24 · M1b: `approve_plan` works on Playwright's own plan format
+
+The plan Playwright's planner saves (`specs/*.md`) is the source; Proofwright's
+test cases (`proofwright/cases/<name>.md`, Action · Data · Expected result)
+are generated from it, never edited by hand — change the plan, run
+`approve_plan` again. Case numbers are stable across re-plans. An approval is
+tied to a fingerprint of its case: if the plan changes the case, the approval
+lapses. Approved cases are written back in Playwright's own plan format
+(`specs/<name>.approved.md`), each title starting with its case number, so
+Playwright's generator reads it like any plan and every test traces to its case.
+A contract test runs Playwright's real `planner_save_plan` and requires the
+reader to read it exactly and the writer to write it byte for byte — a
+Playwright release that changes the format fails that test.
+
+A case with no expected result anywhere can't be approved (it could never
+fail). Unclear steps — a value typed but not named, "works as expected" —
+are questions; approving accepts them as they are.
+
+## 2026-09-24 · The approval comes from the tester
+
+When the app can show a form (MCP elicitation — Claude Code in the terminal,
+from 2.1.76; not yet the desktop app, anthropics/claude-code#41110),
+Proofwright asks the tester directly and the AI's words are ignored. Otherwise
+it needs the tester's own words, passed verbatim, and records that they were
+relayed by the AI client. That second path is only as honest as the client.
+
+## 2026-09-24 · `/proofwright`, and where the agents start
+
+The prompt names each step, who does it, and where the tester decides. The
+project's `proofwright/config.json` can name the Playwright project, seed test
+and tests folder for the agents: measured, Playwright's planner uses the first
+project in the config by default and fails with "seed test not found" when the
+seed lives elsewhere. The demo names project `generated`.
+
+## 2026-09-24 · `proofwright init` protects the project's MCP servers
+
+Measured: `npx playwright init-agents` replaces `.mcp.json`, dropping every
+other MCP server in it. `init` reads the file first and puts those servers
+back, and says which. It shows its changes and makes them only with `--yes`.
+Playwright also installs its healer agent; `init` says Proofwright never uses
+it, and leaves the choice to delete it to the tester.
+
+## 2026-09-24 · The demo carries Playwright's planner and generator — not the healer
+
+`.claude/agents/` holds the two agent files Playwright's `init-agents` wrote
+(1.61.1); the healer's is left out on purpose. `.mcp.json` registers Playwright's
+test server and Proofwright (`node dist/src/cli.js mcp`, relative to the repo).
+Generated tests go to `demo/generated/`, a Playwright project of its own that
+`npm test` leaves out — they meet the planted bugs. Its seed test checks the
+products page, so review stays clean.

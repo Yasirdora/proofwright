@@ -7,6 +7,9 @@ import { defineConfig, devices } from "@playwright/test";
  *                 while the bug is there, and turn red if it disappears.
  *   colleague   — a colleague's weak tests, kept for Proofwright's review and
  *                 prove tools. Never part of `npm test`.
+ *   generated   — the seed test Playwright's planner and generator start from,
+ *                 and the tests the generator writes. They meet the planted
+ *                 bugs, so they're never part of `npm test` either.
  */
 // 4610 sits outside the ranges dev servers grab (Vite takes 5173–5199).
 const PORT = Number(process.env.SHOP_PORT ?? 4610);
@@ -25,6 +28,7 @@ export default defineConfig({
     { name: "shop", testDir: "demo/tests", use: { ...devices["Desktop Chrome"] } },
     { name: "answer-key", testDir: "demo/answer-key", use: { ...devices["Desktop Chrome"] } },
     { name: "colleague", testDir: "demo/colleague", use: { ...devices["Desktop Chrome"] } },
+    { name: "generated", testDir: "demo/generated", use: { ...devices["Desktop Chrome"] } },
   ],
   webServer: {
     command: "node demo/shop/server.mjs",
