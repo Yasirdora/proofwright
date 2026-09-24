@@ -39,3 +39,81 @@ the bug directly (−€2.40 for −€1.20, a 201 where a 400 is required). The
 answer key and the colleague's review key live in `demo/answer-key/`, which
 Proofwright must never read while it explores, plans, writes or reviews;
 M1's tools enforce that with an ignore list.
+
+## 2026-09-24 · Build on Playwright's agents; don't rebuild them
+
+Checked while building M1a, at the owner's prompt ("we do not want to build
+something they already build"). Playwright 1.61 ships three agents —
+planner, generator, healer (`npx playwright init-agents`) — over its own test
+MCP server (`planner_save_plan`, `generator_write_test`, `test_run`,
+`test_debug`, `browser_snapshot` …). The spec's `explore`, `plan`,
+`write_tests` and `run` would duplicate them. The healer is the opposite of
+Proofwright: its instructions say to fix "assertions and expected values", not
+to ask the user, and to "do the most reasonable thing possible to pass the
+test". The owner agreed to re-scope Proofwright as the trust layer on top of
+those agents; the spec change is proposed separately, for the owner's sign-off.
+
+## 2026-09-24 · `review` reuses eslint-plugin-playwright for the rules it has
+
+Seven of the thirteen review rules exist in eslint-plugin-playwright 2.12
+(`no-wait-for-timeout`, `expect-expect`, `missing-playwright-await`,
+`no-force-option`, `no-focused-test`, `no-skipped-test`, `no-raw-locators`,
+`no-nth-methods`), so it checks them. Proofwright keeps only what it lacks:
+tests that hand data to each other, serial mode, shared accounts, passwords
+and real personal data in tests, retries — plus two gaps in the plugin: the
+selector-string page API (`page.fill("input[name=…]")`) and `.fixme`.
+
+- It runs through ESLint's `Linter` with an explicit configuration, so the
+  tester's own ESLint setup is never read or changed and every project is
+  reviewed the same way.
+- The plugin's stricter meaning is adopted: any `.skip` left in is a finding,
+  as is every raw CSS locator and `.first()`/`.nth()`. The review key
+  (demo/answer-key/REVIEW.md) gained the colleague's lines 31 and 59.
+- A skipped, empty test isn't also reported as "no assertion": the skip is the
+  finding.
+- Every finding names who found it — the plugin's rule, or Proofwright.
+
+## 2026-09-24 · The MCP server uses the SDK's low-level `Server`
+
+Tools are declared with hand-written JSON Schemas and inputs are checked by
+hand, so no schema library appears in Proofwright's own code. Answers go out
+as text (the three parts) plus the same result as structured content.
+
+## 2026-09-24 · Runtime dependencies, and Node 20.19
+
+`typescript` moved to the runtime dependencies (`review` parses test files with
+it), next to `@modelcontextprotocol/sdk`, `eslint`, `eslint-plugin-playwright`
+and `@typescript-eslint/parser`, all pinned. ESLint 10 needs Node 20.19 or
+newer, so `engines` says so. `npm audit` found nothing. The one install script
+in the tree, `fsevents` (Playwright's optional macOS file-watcher, used only by
+its watch/UI modes), stays unapproved: nothing here needs it.
+
+## 2026-09-24 · `test_data` marks only what the rules decide
+
+An expectation (accept/refuse) comes only from the rules the tester gives, plus
+three documented defaults — email shaped like name@domain.tld, phone numbers of
+6–15 digits, dates written YYYY-MM-DD — each named in the answer. When no rule
+decides (is the field required? should spaces be trimmed? does 1e2 count?), the
+value is marked for the tester and the question is asked. Every value is made
+up: invented names, reserved email domains (example.com, example.org, .test),
+phone numbers from ranges set aside for fiction (Ofcom's 07700 900xxx, the
+US 555-01xx). The seed defaults to 1; each field draws from its own stream, so
+adding a field never changes the others.
+
+## 2026-09-24 · A fixed password in a test is always a finding
+
+The rule is strict — any literal typed into a password field — rather than
+guessing whether a sign-up form makes it harmless. The shop's own tests typed
+fixed passwords into three sign-up tests, against their helper's promise that
+passwords are "never written into a test"; they now generate one per run
+(`newPassword()`), and the rule stays strict.
+
+## 2026-09-24 · `review` reads only Playwright test files
+
+A `*.test.ts` file isn't necessarily a Playwright test: projects keep Jest,
+Vitest and node:test suites next to their Playwright specs. Reviewing this
+repository whole flagged Proofwright's own node:test unit tests 34 times. A file
+now counts only if it really imports `@playwright/test` (or `playwright/test`),
+itself or through a local module such as a fixtures file — read with the
+TypeScript compiler's import scanner, so text inside strings never counts. The
+rest are left out, and named in the answer.

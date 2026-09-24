@@ -1,21 +1,33 @@
 {
   "name": "proofwright",
-  "version": "0.0.0",
+  "version": "0.1.0-dev",
   "private": true,
   "description": "An MCP server that works with a human tester: plans, writes, runs and proves Playwright tests.",
   "type": "module",
+  "bin": {
+    "proofwright": "dist/src/cli.js"
+  },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "scripts": {
-    "shop": "node demo/shop/server.mjs",
-    "check": "tsc --noEmit -p tsconfig.json",
-    "test": "playwright test --project=shop --project=answer-key",
-    "test:colleague": "playwright test --project=colleague"
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.build.json",
+    "test": "npm run test:unit && npm run test:demo",
+    "test:unit": "npm run build && node --test dist/test/*.test.js",
+    "test:demo": "playwright test --project=shop --project=answer-key",
+    "test:colleague": "playwright test --project=colleague",
+    "shop": "node demo/shop/server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.1",
+    "@typescript-eslint/parser": "8.70.1",
+    "eslint": "10.11.0",
+    "eslint-plugin-playwright": "2.12.0",
+    "typescript": "5.9.3"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
-    "@types/node": "26.6.2",
-    "typescript": "5.9.3"
+    "@types/node": "26.6.2"
   }
 }

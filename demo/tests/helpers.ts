@@ -1,6 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
+/** A made-up password that meets the shop's rules — different on every run, never written into a test. */
+export function newPassword(): string {
+  return `pw-${randomUUID()}-1a`;
+}
+
 /**
  * A fresh account for one test, signed up through the API so the page's
  * cookies are logged in. The email and password are made up per test — never
@@ -8,7 +13,7 @@ import { randomUUID } from "node:crypto";
  */
 export async function signUp(page: Page, name = "Ada Lovelace") {
   const email = `tester+${randomUUID()}@example.com`;
-  const password = `pw-${randomUUID()}-1a`;
+  const password = newPassword();
   const res = await page.request.post("/api/signup", {
     data: { name, email, password, confirmPassword: password, birthDate: "1990-05-17" },
   });

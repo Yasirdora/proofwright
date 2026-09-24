@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { addToCart, applyCoupon, signUp, summary } from "./helpers";
+import { addToCart, applyCoupon, newPassword, signUp, summary } from "./helpers";
 
 /**
  * The shop's own tests: every rule in demo/README.md that the shop keeps. The
@@ -123,11 +123,12 @@ test.describe("coupons", () => {
 
 test.describe("accounts", () => {
   test("signing up logs you in", async ({ page }) => {
+    const password = newPassword();
     await page.goto("/#/signup");
     await page.getByLabel("Full name").fill("Grace Hopper");
     await page.getByLabel("Email").fill(`grace+${Date.now()}-${test.info().workerIndex}@example.com`);
-    await page.getByLabel("Password", { exact: true }).fill("compiler1952");
-    await page.getByLabel("Confirm password").fill("compiler1952");
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByLabel("Confirm password").fill(password);
     await page.getByLabel("Date of birth").fill("1906-12-09");
     await page.getByRole("button", { name: "Create account" }).click();
     await expect(page.getByRole("status")).toHaveText("Welcome, Grace Hopper!");
@@ -147,9 +148,10 @@ test.describe("accounts", () => {
   });
 
   test("the passwords must match", async ({ page }) => {
+    const password = newPassword();
     await page.goto("/#/signup");
-    await page.getByLabel("Password", { exact: true }).fill("letters123");
-    await page.getByLabel("Confirm password").fill("letters124");
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByLabel("Confirm password").fill(`${password}-different`);
     await page.getByRole("button", { name: "Create account" }).click();
     await expect(page.getByLabel("Confirm password")).toHaveAccessibleDescription("The passwords don't match");
   });
@@ -163,12 +165,13 @@ test.describe("accounts", () => {
 
   test("an email can only have one account", async ({ page }) => {
     const { email } = await signUp(page);
+    const password = newPassword();
     await page.request.post("/api/logout");
     await page.goto("/#/signup");
     await page.getByLabel("Full name").fill("Someone Else");
     await page.getByLabel("Email").fill(email);
-    await page.getByLabel("Password", { exact: true }).fill("another123");
-    await page.getByLabel("Confirm password").fill("another123");
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByLabel("Confirm password").fill(password);
     await page.getByLabel("Date of birth").fill("1990-01-01");
     await page.getByRole("button", { name: "Create account" }).click();
     await expect(page.getByLabel("Email")).toHaveAccessibleDescription("An account with this email already exists");
