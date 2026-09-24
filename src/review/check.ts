@@ -12,6 +12,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import ts from "typescript";
+import { count } from "../answer.js";
 import { RULES, type RuleId, type Severity } from "./rules.js";
 
 export interface Finding {
@@ -144,7 +145,7 @@ export function analyzeFile(abs: string, rel: string): FileAnalysis {
         }
         const retries = property(opts, "retries");
         if (retries && ts.isNumericLiteral(retries) && Number(retries.text) > 0) {
-          add(ctx, "retries", call, `\`retries: ${retries.text}\` — a test can fail ${retries.text} times and still count as passed.`);
+          add(ctx, "retries", call, `\`retries: ${retries.text}\` — a test can fail ${count(Number(retries.text), "time")} and still count as passed.`);
         }
       }
     }

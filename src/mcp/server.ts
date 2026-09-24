@@ -3,7 +3,8 @@
  * format (answer.ts) as text for the tester, with the same result as
  * structured content for the client.
  *
- * Tools: `review`, `test_data` (M1a), `approve_plan` (M1b). Prompt:
+ * Tools: `review`, `test_data` (M1a), `approve_plan` (M1b), `report`,
+ * `explain` (M2). Prompt:
  * `proofwright` — the guided session over Playwright's own agents.
  */
 import * as fs from "node:fs";
@@ -19,6 +20,7 @@ import { type Answer, renderAnswer } from "../answer.js";
 import { CHARACTER_KINDS, DataError, FIELD_KINDS, type FieldSpec } from "../data/generate.js";
 import { testData } from "../data/tool.js";
 import { approvePlan, type AskTester } from "../plan/tool.js";
+import { explain, report } from "../runs/tools.js";
 import { PROMPTS, renderPrompt } from "./prompts.js";
 import { Project, ProjectError } from "../project.js";
 import { review } from "../review/review.js";
@@ -167,6 +169,70 @@ const TOOLS: Tool[] = [
         },
         ask,
       );
+    },
+  },
+  {
+    name: "report",
+    description:
+      "The one-page test report. With `run`, it runs Playwright's own runner now (the project's config, plus a JSON report and traces on failure) and keeps the results and the evidence of every failure; with `from`, it reads a Playwright JSON report you already have (from CI); with neither, it reports on the last recorded run. Compares with the run before — new failures, still failing, fixed — and gives each failure a one-line diagnosis: app bug, test bug, flaky or environment, with how sure it is.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        run: {
+          type: "object",
+          description: "Run Playwright's runner now. Leave the object empty to run everything.",
+          properties: {
+            paths: { type: "array", items: { type: "string" }, description: "Test files or folders, relative to the project." },
+            project: { type: "string", description: "A Playwright project name from playwright.config." },
+            grep: { type: "string", description: "Only tests whose title matches this." },
+            timeoutMinutes: { type: "number", description: "Stop the run after this long. Default 15." },
+          },
+          additionalProperties: false,
+        },
+        from: { type: "string", description: "A Playwright JSON report to read instead of running, relative to the project." },
+        root: ROOT_PROPERTY,
+      },
+      additionalProperties: false,
+    },
+    run: (project, args) => {
+      const run = args.run;
+      if (run !== undefined && (typeof run !== "object" || run === null || Array.isArray(run))) {
+        throw new ProjectError("run must be an object (it can be empty).");
+      }
+      const r = (run ?? undefined) as Record<string, unknown> | undefined;
+      return report(project, {
+        ...(r
+          ? {
+              run: {
+                ...(r.paths !== undefined ? { paths: stringList(r.paths, "run.paths") } : {}),
+                ...(r.project !== undefined ? { project: optional(r.project, "string", "run.project") } : {}),
+                ...(r.grep !== undefined ? { grep: optional(r.grep, "string", "run.grep") } : {}),
+                ...(r.timeoutMinutes !== undefined ? { timeoutMinutes: optional(r.timeoutMinutes, "number", "run.timeoutMinutes") } : {}),
+              },
+            }
+          : {}),
+        ...(args.from !== undefined ? { from: optional(args.from, "string", "from") } : {}),
+      });
+    },
+  },
+  {
+    name: "explain",
+    description:
+      "Explain one failed test from a recorded run: what happened (the failing line, expected and received), the evidence Playwright kept (the page as it was, the screenshot, the trace), the reasoning, how sure it is, and what to do — with a bug report drafted for an app bug. It proposes; it never changes a test, and never proposes changing what a test expects to make it pass.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        test: { type: "string", description: "Which failure: part of its title, its test case number (TC-003), or file:line." },
+        run: { type: "string", description: "Which recorded run. Default: the last one." },
+        root: ROOT_PROPERTY,
+      },
+      required: ["test"],
+      additionalProperties: false,
+    },
+    run: (project, args) => {
+      const test = optional(args.test, "string", "test");
+      if (!test) throw new ProjectError("Say which failure to explain: part of its title, its case number, or file:line.");
+      return explain(project, { test, ...(args.run !== undefined ? { run: optional(args.run, "string", "run") } : {}) });
     },
   },
 ];

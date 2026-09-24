@@ -10,6 +10,9 @@ playwright/.cache/
 # build output
 dist/
 
+# Proofwright's run evidence (screenshots, traces) — the reports stay
+proofwright/runs/
+
 # OS / editor
 .DS_Store
 *.log

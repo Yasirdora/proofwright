@@ -169,3 +169,48 @@ test server and Proofwright (`node dist/src/cli.js mcp`, relative to the repo).
 Generated tests go to `demo/generated/`, a Playwright project of its own that
 `npm test` leaves out — they meet the planted bugs. Its seed test checks the
 products page, so review stays clean.
+
+## 2026-09-24 · M2: `report` runs Playwright's runner; it doesn't rebuild it
+
+A run is `npx playwright test` with the project's own config; Proofwright adds
+only the JSON reporter (to `PLAYWRIGHT_JSON_OUTPUT_FILE`) and
+`--trace=retain-on-failure`. Or it reads a JSON report the tester already has,
+from CI. Playwright's `test_run` MCP tool answers in text for an agent to read;
+there is nothing in it to keep and compare, which is why `report` asks the
+runner for its JSON report instead.
+
+Each run is kept in `proofwright/runs/<id>/` with every failure's evidence
+copied beside it — the screenshot, `error-context.md` (Playwright's error
+details and the page's accessibility snapshot at the failure) and the trace
+(up to 20 MB) — because Playwright clears `test-results/` on its next run.
+`proofwright/runs/` stays out of git; the reports (`proofwright/reports/`) are
+meant to be kept. `proofwright init` now adds the `.gitignore` entry too.
+
+## 2026-09-24 · How `explain` decides, and how sure it says it is
+
+Fixed rules, strongest evidence first: a pass on retry is **flaky**; an address
+that doesn't resolve or refuses, or a browser that won't start, is
+**environment**; the test's own `TypeError`/`ReferenceError` and a strict-mode
+violation are **test bugs** — all "certain". A locator that found nothing is
+judged from the page snapshot: an element of the same kind with a close name
+means the locator is out of date (**test bug**, "likely"); nothing like it means
+the element is missing (**app bug**, "possible"); the exact element present but
+unusable is **unclear**. A value the page showed that the test didn't expect is
+an **app bug** — "likely" when an approved test case set the expectation,
+otherwise "possible", with the note that the requirement decides; a test that
+passed before on the same code drops to "possible", flagged as maybe flaky.
+
+It never proposes changing what a test expects to make it pass; for an app bug
+it drafts the bug report, pointing at the test case when there is one.
+
+## 2026-09-24 · A failure suite with an answer key
+
+`demo/failures/` fails on purpose, one test per kind: two planted app bugs
+(B3, B7), three test bugs (strict mode, a stale button name, a `TypeError`), a
+flaky test and an unreachable service — `stock.invalid`, a reserved name that
+can never resolve (port 9 was tried first; Chrome refuses it as an unsafe port,
+which isn't the failure meant). The flaky test is simulated — it fails on its
+first attempt only — and says so. `demo/answer-key/FAILURES.md` holds the
+answers; an integration test requires `report` to match them, on a copy of the
+demo and a port of its own. The suite is a Playwright project of its own, out of
+`npm test`.

@@ -21,7 +21,7 @@ function playwrightProject(mcp?: unknown): string {
 test("init: shows what it would change, and changes nothing without --yes", () => {
   const dir = playwrightProject();
   const a = init(new Project(dir), false);
-  assert.equal(a.data.planned.length, 3);
+  assert.equal(a.data.planned.length, 4);
   assert.deepEqual(a.need, ["If that's what you want, run `proofwright init --yes`."]);
   assert.deepEqual(fs.readdirSync(dir).sort(), ["node_modules", "package.json", "playwright.config.ts"]);
 });
@@ -38,6 +38,7 @@ test("init --yes: Playwright's agents, Proofwright next to them — and the test
   assert.deepEqual(a.data.restoredServers, ["my-other-server"], "Playwright's init-agents drops it; init puts it back");
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "proofwright/config.json"), "utf8")), { ignore: [] });
   assert.match(a.found, /healer/);
+  assert.match(fs.readFileSync(path.join(dir, ".gitignore"), "utf8"), /^proofwright\/runs\/$/m, "run evidence stays out of git");
 
   const again = init(new Project(dir), true);
   assert.equal(again.headline, "This project is already set up.");

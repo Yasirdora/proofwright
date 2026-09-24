@@ -19,7 +19,7 @@ need from you** — and every finding links to its file and line.
 | M0 | Proofwright Shop — the demo app, its planted bugs, a "colleague's" weak tests | done |
 | M1a | The MCP server with `review` and `test_data` | done |
 | M1b | `approve_plan`, the `/proofwright` prompt and `proofwright init` — on Playwright's own planner and generator | done |
-| M2 | `explain` and `report` — on Playwright's runner and its evidence | — |
+| M2 | `report` and `explain` — on Playwright's runner and its evidence | done |
 | M3 | `prove` — on any Playwright test | — |
 
 Not published anywhere; local only.
@@ -30,6 +30,8 @@ Not published anywhere; local only.
 |---|---|
 | `review` | Checks Playwright test scripts — yours or a colleague's — against 13 rules: fixed waits, tests with no assertion, `expect` without `await`, forced clicks, fragile selectors, `.only`/`.skip` left in, tests that hand data to each other, run-in-order mode, shared accounts, passwords or real personal data in tests, and retries that hide flaky tests. Seven of the rules are checked through [eslint-plugin-playwright](https://github.com/mskelton/eslint-plugin-playwright); the rest are Proofwright's own. Every finding says which one found it. Reads only; runs and changes nothing. |
 | `approve_plan` | Turns the plan Playwright's planner saved into numbered test cases you read — Action · Data · Expected result — lists what's open, and records your approval case by case. Only approved cases go on, in a plan of their own for Playwright's generator. The approval is yours: Proofwright asks you directly where the app can show a form (Claude Code in the terminal), and otherwise needs your own words. |
+| `report` | The one-page report. Runs Playwright's own runner (your config, plus a JSON report and traces on failure) — or reads a JSON report from CI — keeps the results and every failure's evidence, compares with the run before (new failures, still failing, fixed), and gives each failure a one-line diagnosis with how sure it is. |
+| `explain` | One failure in depth: the failing line, expected and received, the page as it was, the screenshot and trace, the reasoning — **app bug, test bug, flaky or environment** — and what to do, with a bug report drafted for an app bug. It proposes; it never changes a test, and never proposes changing what a test expects to make it pass. |
 | `test_data` | Made-up values for a form's fields — typical, at the limits, invalid, and the unusual ones that break apps (other scripts, right-to-left, emoji, markup, byte limits) — each marked **accept**, **refuse**, or a question for you, worked out only from the rules you give. Same seed, same values. Can save to `proofwright/data/<name>.json`. |
 
 Plus the prompt **`/proofwright`** (in Claude Code: `/mcp__proofwright__proofwright`):
@@ -69,9 +71,20 @@ Playwright's planner explores the shop and saves a plan in `specs/`; Proofwright
 shows the test cases and what's open; you approve (in a form, in the terminal
 app — in your own words elsewhere); Playwright's generator writes the approved
 tests into `demo/generated/`; Proofwright reviews them. Then run
-`npm run test:generated` — some should fail on the shop's planted coupon bugs;
-explaining those failures is the next milestone. Don't start the shop yourself:
-Playwright starts it on port 4610 when it needs it.
+`npm run test:generated` — some should fail on the shop's planted coupon bugs.
+Ask *"report on the generated tests"* and *"explain the first failure"*: `report`
+runs them through Playwright and names each failure; `explain` shows why. Don't
+start the shop yourself: Playwright starts it on port 4610 when it needs it.
+
+To see `report` and `explain` on failures of every kind — app bugs, test bugs,
+a flaky test, an unreachable service — without the agents:
+
+```sh
+node dist/src/cli.js report --project failures
+node dist/src/cli.js explain "applying a coupon"
+```
+
+(`demo/answer-key/FAILURES.md` says what each failure really is.)
 
 ## From a terminal
 
@@ -93,6 +106,7 @@ npm run shop     # Proofwright Shop on http://127.0.0.1:4610
 npm test         # Proofwright's unit tests, then the shop's tests and the answer key
 npm run check    # type-check everything
 npm run test:generated   # the tests Playwright's generator wrote, if any
+npx playwright test --project=failures   # the failures built for explain and report
 ```
 
 What the shop promises, its API, and why it has planted bugs:

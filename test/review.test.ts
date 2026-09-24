@@ -318,5 +318,12 @@ test("review: the whole repository — Proofwright's own unit tests aren't Playw
   assert.ok(answer.data.notPlaywright.every((f) => f.startsWith("test/")));
   assert.ok(answer.data.notPlaywright.length >= 4);
   assert.ok(!answer.data.findings.some((f) => f.file.startsWith("test/")));
-  assert.equal(answer.data.findings.length, 19, "only the colleague's files have problems");
+  // The colleague's weak tests, and the failure suite (built to fail) — nothing else.
+  const byFolder = (prefix: string) => answer.data.findings.filter((f) => f.file.startsWith(prefix)).length;
+  assert.equal(byFolder("demo/colleague/"), 19);
+  assert.deepEqual(
+    answer.data.findings.filter((f) => f.file.startsWith("demo/failures/")).map((f) => f.rule),
+    ["fragile-selector", "retries", "no-assertion"],
+  );
+  assert.equal(answer.data.findings.length, 22);
 });

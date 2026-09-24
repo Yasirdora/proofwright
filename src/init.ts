@@ -5,6 +5,8 @@
  *      the planner and generator, their MCP server, a seed test and specs/.
  *   2. Proofwright's MCP server, next to Playwright's, in .mcp.json.
  *   3. proofwright/config.json, for paths Proofwright must never read.
+ *   4. proofwright/runs/ in .gitignore — run evidence (screenshots, traces)
+ *      stays out of git; the reports don't.
  *
  * It shows what it would change and changes nothing without --yes. Playwright's
  * init-agents replaces .mcp.json outright, dropping the project's other MCP
@@ -44,11 +46,14 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
   const hasProofwright = Boolean(before.mcpServers?.proofwright);
   const configFile = path.join(project.root, "proofwright/config.json");
   const hasConfig = fs.existsSync(configFile);
+  const gitignore = path.join(project.root, ".gitignore");
+  const ignoresRuns = fs.existsSync(gitignore) && /^\/?proofwright\/runs\/?$/m.test(fs.readFileSync(gitignore, "utf8"));
 
   const planned = [
     ...(hasAgents ? [] : ["Install Playwright's test agents: `npx playwright init-agents --loop=claude` (the planner, the generator, their MCP server, a seed test, specs/)."]),
     ...(hasProofwright ? [] : ["Add Proofwright's MCP server to `.mcp.json`, next to Playwright's."]),
     ...(hasConfig ? [] : ["Create `proofwright/config.json` (paths Proofwright must never read — none yet)."]),
+    ...(ignoresRuns ? [] : ["Add `proofwright/runs/` to `.gitignore`, so run evidence (screenshots, traces) stays out of git."]),
   ];
   const otherServers = Object.keys(before.mcpServers ?? {}).filter((n) => n !== "proofwright" && n !== "playwright-test");
 
@@ -56,7 +61,7 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
     return {
       headline: "This project is already set up.",
       did: ["Checked Playwright's agents, `.mcp.json` and `proofwright/config.json`. Nothing was changed."],
-      found: "Playwright's agents, Proofwright's MCP server and Proofwright's config are all in place.",
+      found: "Playwright's agents, Proofwright's MCP server, Proofwright's config and the .gitignore entry are all in place.",
       need: [],
       next: "In Claude Code, try: /mcp__proofwright__proofwright check that … works",
       data: { planned, done: [], restoredServers: [] },
@@ -100,6 +105,11 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
     fs.mkdirSync(path.dirname(configFile), { recursive: true });
     fs.writeFileSync(configFile, `${JSON.stringify({ ignore: [] }, null, 2)}\n`);
     done.push("Created `proofwright/config.json`.");
+  }
+  if (!ignoresRuns) {
+    const before = fs.existsSync(gitignore) ? fs.readFileSync(gitignore, "utf8") : "";
+    fs.writeFileSync(gitignore, `${before}${before && !before.endsWith("\n") ? "\n" : ""}\n# Proofwright's run evidence (screenshots, traces)\nproofwright/runs/\n`);
+    done.push("Added `proofwright/runs/` to `.gitignore`.");
   }
 
   return {

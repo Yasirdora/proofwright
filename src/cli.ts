@@ -5,6 +5,8 @@
  *   proofwright mcp [--root DIR]                     start the MCP server on stdio
  *   proofwright init [--yes] [--root DIR]            set a Playwright project up
  *   proofwright review [PATH ...] [--root DIR] [--json]
+ *   proofwright report [--run] [--project P] [--grep G] [--from FILE] [--root DIR]
+ *   proofwright explain TEST [--run-id ID] [--root DIR]
  *   proofwright --version | --help
  */
 import { renderAnswer } from "./answer.js";
@@ -12,6 +14,7 @@ import { init } from "./init.js";
 import { VERSION, serveStdio } from "./mcp/server.js";
 import { Project, ProjectError } from "./project.js";
 import { review } from "./review/review.js";
+import { explain, report } from "./runs/tools.js";
 
 const USAGE = `Proofwright ${VERSION} — works with a human tester on Playwright tests.
 
@@ -22,6 +25,13 @@ Usage:
                                                      Shows the changes; makes them only with --yes
   proofwright review [PATH ...] [--root DIR] [--json]
                                                      Review test scripts against the rules
+  proofwright report [--run] [--project P] [--grep G] [--from FILE] [--root DIR]
+                                                     The one-page report: --run runs Playwright's
+                                                     runner now; --from reads a JSON report;
+                                                     neither reports on the last recorded run
+  proofwright explain TEST [--run-id ID] [--root DIR]
+                                                     Explain one failure: part of its title, TC-001,
+                                                     or file:line
   proofwright --version                              Print the version
   proofwright --help                                 Print this help
 
@@ -62,6 +72,26 @@ async function main(argv: string[]): Promise<number> {
     case "init": {
       const answer = init(new Project(root), flag("--yes"));
       process.stdout.write(renderAnswer(answer));
+      return 0;
+    }
+    case "report": {
+      const project = option("--project");
+      const grep = option("--grep");
+      const from = option("--from");
+      const run = flag("--run") || project !== undefined || grep !== undefined;
+      const paths = args.filter((a) => !a.startsWith("--"));
+      const answer = report(new Project(root), {
+        ...(run ? { run: { ...(paths.length > 0 ? { paths } : {}), ...(project ? { project } : {}), ...(grep ? { grep } : {}) } } : {}),
+        ...(from ? { from } : {}),
+      });
+      process.stdout.write(renderAnswer(answer));
+      return 0;
+    }
+    case "explain": {
+      const runId = option("--run-id");
+      const test = args.join(" ").trim();
+      if (!test) throw new ProjectError("Say which failure to explain: part of its title, TC-001, or file:line.");
+      process.stdout.write(renderAnswer(explain(new Project(root), { test, ...(runId ? { run: runId } : {}) })));
       return 0;
     }
     case "review": {
