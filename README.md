@@ -18,9 +18,23 @@ v0.1 is being built in milestones, each scoped and approved before it is built:
 
 | Milestone | Contents | State |
 |---|---|---|
-| M0 | Proofwright Shop — the demo app, its planted bugs, a "colleague's" weak tests | in progress |
+| M0 | Proofwright Shop — the demo app, its planted bugs, a "colleague's" weak tests | done |
 | M1 | `explore`, `plan`, `approve_plan`, `write_tests`, `test_data`, `review` | — |
 | M2 | `run`, `explain`, `report` | — |
 | M3 | `prove` | — |
+
+## Try the demo shop
+
+Needs Node 20 or newer.
+
+```sh
+npm install
+npm run shop     # Proofwright Shop on http://127.0.0.1:4610
+npm test         # the shop's own tests + the answer key for its planted bugs
+npm run check    # type-check
+```
+
+What the shop promises, its API, and why it has planted bugs:
+[demo/README.md](demo/README.md).
 
 Not published anywhere; local only.

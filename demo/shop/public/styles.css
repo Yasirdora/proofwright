@@ -1,0 +1,39 @@
+:root {
+  --ink: #1d1d1f;
+  --muted: #5f6368;
+  --line: #d9d9de;
+  --accent: #2155cd;
+  --danger: #b3261e;
+  --ok: #1e7b34;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+}
+body { margin: 0; background: #fafafa; }
+.site-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.75rem 1.5rem; background: #fff; border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; color: var(--ink); text-decoration: none; }
+nav { display: flex; gap: 1rem; align-items: center; }
+nav a, .link-button { color: var(--accent); background: none; border: 0; font: inherit; cursor: pointer; padding: 0; }
+main { max-width: 56rem; margin: 1.5rem auto; padding: 0 1.5rem; }
+#flash { max-width: 56rem; margin: 0.75rem auto 0; padding: 0 1.5rem; color: var(--ok); min-height: 1.25rem; }
+.products { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 1rem; }
+.product { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 1rem; }
+.product h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+.price s { color: var(--muted); margin-left: 0.4rem; }
+.stock { color: var(--muted); font-size: 0.9rem; }
+button.primary { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 0.5rem 0.9rem; font: inherit; cursor: pointer; }
+table { width: 100%; border-collapse: collapse; background: #fff; }
+th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid var(--line); }
+td.num, th.num { text-align: right; }
+input[type="number"] { width: 4.5rem; }
+.summary { margin-top: 1rem; max-width: 20rem; margin-left: auto; }
+.summary dl { display: grid; grid-template-columns: 1fr auto; gap: 0.25rem 1rem; }
+.summary dd { margin: 0; text-align: right; }
+form.stack { display: grid; gap: 0.9rem; max-width: 26rem; }
+form.stack label { display: grid; gap: 0.25rem; font-weight: 600; }
+form.stack input { font: inherit; padding: 0.45rem; border: 1px solid var(--line); border-radius: 6px; }
+.field-error, .error { color: var(--danger); font-weight: 400; }
+.coupon { display: flex; gap: 0.5rem; align-items: end; margin-top: 1rem; }
+.coupon label { display: grid; gap: 0.25rem; }
+.recs { margin-top: 2rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

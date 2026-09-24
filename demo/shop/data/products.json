@@ -1,0 +1,8 @@
+[
+  { "id": "blue-mug", "name": "Blue mug", "priceCents": 1200, "stock": 50 },
+  { "id": "notebook", "name": "Notebook", "priceCents": 1235, "stock": 50 },
+  { "id": "desk-lamp", "name": "Desk lamp", "priceCents": 3990, "salePriceCents": 2990, "stock": 20 },
+  { "id": "poster", "name": "Limited poster", "priceCents": 800, "stock": 3 },
+  { "id": "tea-sampler", "name": "Tea sampler", "priceCents": 2000, "stock": 50 },
+  { "id": "pencil-set", "name": "Pencil set", "priceCents": 450, "stock": 100 }
+]

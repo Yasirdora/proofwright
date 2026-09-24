@@ -1,0 +1,21 @@
+{
+  "name": "proofwright",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An MCP server that works with a human tester: plans, writes, runs and proves Playwright tests.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "shop": "node demo/shop/server.mjs",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "playwright test --project=shop --project=answer-key",
+    "test:colleague": "playwright test --project=colleague"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@types/node": "26.6.2",
+    "typescript": "5.9.3"
+  }
+}
