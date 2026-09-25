@@ -56,6 +56,8 @@ export interface CaseLedger {
   approvals: Record<string, Approval>;
   /** Cases the tester chose not to approve; they aren't asked about again. */
   leftOut?: string[];
+  /** Where each case sits — so a case edited in place (renamed, reworded) keeps its number. */
+  places?: Record<string, { suite: string; index: number; file: string }>;
 }
 
 /**
@@ -83,10 +85,28 @@ const keyOf = (suite: string, test: PlanTest) => `${suite} › ${test.name}`;
 export function buildCases(plan: TestPlan, ledger: CaseLedger): TestCase[] {
   let next = 1 + Math.max(0, ...Object.values(ledger.ids).map((id) => Number(id.slice(3)) || 0));
   const cases: TestCase[] = [];
+  // A case whose title changed has a new key. If a case the ledger knows is gone from the plan
+  // and sat in the same place (same suite and position, or the same test file), it's that
+  // case, edited: it keeps its number (its approval lapses, as for any change).
+  const present = new Set(plan.suites.flatMap((s) => s.tests.map((t) => keyOf(s.name, t))));
+  const gone = new Map(Object.entries(ledger.ids).filter(([key]) => !present.has(key)).map(([key, id]) => [id, key]));
+  const places: NonNullable<CaseLedger["places"]> = {};
   for (const suite of plan.suites) {
-    for (const test of suite.tests) {
+    for (const [index, test] of suite.tests.entries()) {
       const key = keyOf(suite.name, test);
+      if (!ledger.ids[key]) {
+        const edited = [...gone.keys()].find((gid) => {
+          const was = ledger.places?.[gid];
+          return was !== undefined && was.suite === suite.name && ((test.file !== "" && was.file === test.file) || was.index === index);
+        });
+        if (edited) {
+          delete ledger.ids[gone.get(edited)!];
+          gone.delete(edited);
+          ledger.ids[key] = edited;
+        }
+      }
       const id = (ledger.ids[key] ??= `TC-${String(next++).padStart(3, "0")}`);
+      places[id] = { suite: suite.name, index, file: test.file };
       const steps = test.steps.map((s) => ({
         action: s.perform ?? "",
         data: valuesOf(s.perform ?? "").values,
@@ -114,6 +134,7 @@ export function buildCases(plan: TestPlan, ledger: CaseLedger): TestCase[] {
       cases.push(c);
     }
   }
+  ledger.places = { ...ledger.places, ...places };
   return cases;
 }
 

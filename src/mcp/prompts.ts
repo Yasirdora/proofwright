@@ -47,6 +47,20 @@ export function renderPrompt(name: string, args: Record<string, string>, project
   const request = (args.request ?? "").trim();
   if (!request) throw new ProjectError("Say what to test, e.g. \"check that coupon codes work at checkout\".");
   const cut = client !== undefined && SPLITS_ARGUMENTS.has(client);
+  return {
+    description: `Proofwright: ${request}`,
+    messages: [{ role: "user", content: { type: "text", text: sessionText(request, project, { cut }) } }],
+  };
+}
+
+/**
+ * The guided session, for the AI running it: Playwright's agents and
+ * Proofwright's tools in turn, the tester in charge. Shared by the prompt and
+ * the guide tool, so every AI app gets the same steps. `cut`: the app passed
+ * only the first word of the request (Claude Code's prompt commands).
+ */
+export function sessionText(request: string, project?: Project, options: { cut?: boolean } = {}): string {
+  const cut = options.cut === true;
   const slug = cut ? "<name>" : slugFor(request);
   const plan = `specs/${slug}.plan.md`;
   const asked = cut
@@ -63,13 +77,15 @@ export function renderPrompt(name: string, args: Record<string, string>, project
   const requirements = project?.config.requirements?.length
     ? `what the app promises in ${project.config.requirements.map((r) => `\`${r}\``).join(" and ")}`
     : "what the app promises (ask the tester where its requirements are written, if you don't know)";
-  const text = `${asked}
+  return `${asked}
 
-Run Proofwright's guided session. The tester is in charge: show them each Proofwright answer as it is, stop wherever it says "What to do", and never answer those questions or approve anything for them. Write to the tester in clear, simple English: short, and only what they need.
+Run Proofwright's guided session. The tester is in charge: show them each Proofwright answer as it is, stop wherever it says "What to do", and never answer those questions or approve anything for them. Write to the tester in clear, simple English: short, and only what they need. Start each step's message with "Step N of 6 — <name>", and end it with the next step: what the tester does or says.
 
 Rules for every step — tell Playwright's agents too:
 - Expected results come from the request and from ${requirements}. Never read the app's source code to decide what is right: a test written from the code confirms its bugs.
 - When the page does something the requirements don't mention, write that expected result starting with "Not promised:". Proofwright then asks the tester whether the app should do it.
+- Every step must be something a user can do on the page — no direct API calls — unless the tester asks for API tests.
+- If this app can't hand work to Playwright's agents, do their work yourself with the playwright-test tools, following the agent's instructions (in .claude/agents/ or .github/agents/).
 
 1. Plan — with the playwright-test-planner agent. Explore the app for this request, then save the plan with planner_save_plan as \`${plan}\`. Cover the normal path, limits, empty and unusual values, and errors. Assume a fresh state for every test. Give every step an expected result the page can show.${where ? ` ${where}` : ""}
 
@@ -84,11 +100,7 @@ Rules for every step — tell Playwright's agents too:
 
 5. Review — call Proofwright's review on the files the generator wrote, and show the findings.
 
-6. Prove — tell the tester it takes a few minutes, then call Proofwright's prove with paths set to the files the generator wrote${project?.config.project ? ` and project "${project.config.project}"` : ""}. Show the answer: a test that stays green when its own step fails needs a stronger check, and the tester decides how.
+6. Prove — first check the app's address is free: Playwright's generator often leaves the app running. If it did, stop that process (make sure first that it's this project's own app). Then tell the tester it takes a few minutes, and call Proofwright's prove with paths set to the files the generator wrote${project?.config.project ? ` and project "${project.config.project}"` : ""}. Show the answer: a test that stays green when its own step fails needs a stronger check, and the tester decides how.
 
-Never use the playwright-test-healer agent, and never change what a test expects without the tester's yes. If test data is needed, Proofwright's test_data makes it up — made-up values only.`;
-  return {
-    description: `Proofwright: ${request}`,
-    messages: [{ role: "user", content: { type: "text", text } }],
-  };
+Never use the playwright-test-healer agent, and never change what a test expects without the tester's yes. If test data is needed, Proofwright's test_data makes it up — made-up values only. At any time, Proofwright's guide tool says where the tester is and what comes next.`;
 }

@@ -23,6 +23,7 @@ file and line.
 | M1b | `approve_plan`, the `/proofwright` prompt and `proofwright init` — on Playwright's own planner and generator | done |
 | M2 | `report` and `explain` — on Playwright's runner and its evidence | done |
 | M3 | `prove` — on any Playwright test | done |
+| Guided | `/proofwright` and `guide` step by step; the Claude desktop app; GitHub Copilot CLI | done |
 
 Not published anywhere; local only.
 
@@ -30,6 +31,7 @@ Not published anywhere; local only.
 
 | Tool | What it does |
 |---|---|
+| `guide` | Where you are in each test session — plan, test cases, approval, tests, review, prove — and the one next step, with what to say. Reads what's saved in the project, so it works after a break or in a new session. `/proofwright` with no words calls it. |
 | `review` | Checks Playwright test scripts — yours or a colleague's — against 13 rules: fixed waits, tests with no assertion, `expect` without `await`, forced clicks, fragile selectors, `.only`/`.skip` left in, tests that hand data to each other, run-in-order mode, shared accounts, passwords or real personal data in tests, and retries that hide flaky tests. Seven of the rules are checked through [eslint-plugin-playwright](https://github.com/mskelton/eslint-plugin-playwright); the rest are Proofwright's own. Every finding says which one found it. Reads only; runs and changes nothing. |
 | `approve_plan` | Turns the plan Playwright's planner saved into numbered test cases you read — Action · Data · Expected result — asks about what's open (a step that doesn't say what it types, a vague result, a result the requirements don't promise), and records your approval case by case. Only approved cases go on, in a plan of their own for Playwright's generator. The approval is yours: where the app can show a form (Claude Code in the terminal), Proofwright asks you directly — **Accept** approves, **Decline** doesn't, and the form waits 15 minutes; elsewhere it needs your own words. Cases you leave out aren't asked about again. |
 | `report` | The one-page report. Runs Playwright's own runner (your config, plus a JSON report and traces on failure) — or reads a JSON report from CI — keeps the results and every failure's evidence, compares with the run before (new failures, still failing, fixed), and gives each failure a one-line diagnosis with how sure it is. |
@@ -43,43 +45,65 @@ approve the test cases, Playwright's generator writes only the approved ones,
 `review` checks them, and `prove` shows whether they can fail. Playwright's
 healer is never used.
 
+## Start here
+
+In Claude Code (the terminal, or the Code tab of the Claude desktop app), in
+your project:
+
+```
+/proofwright check that coupon codes work at checkout
+```
+
+Proofwright takes you through six steps — **plan · test cases · approval ·
+tests · review · prove** — and every answer ends with the next step and what to
+say. After a break, or in a new session, type `/proofwright` on its own: it
+shows where you are and what comes next.
+
+In GitHub Copilot CLI, ask in your own words: *"use Proofwright to check that
+coupon codes work at checkout"*, or *"Proofwright: where am I?"*.
+
 ## Set up your own Playwright project
 
 Needs Node 20.19 or newer.
 
 ```sh
 npm install && npm run build          # in this repository, once
-node /path/to/proofwright/dist/src/cli.js init          # in your project: shows what it would change
-node /path/to/proofwright/dist/src/cli.js init --yes    # …and does it
+node /path/to/proofwright/dist/src/cli.js init              # in your project: shows what it would change
+node /path/to/proofwright/dist/src/cli.js init --yes        # …and does it (Claude Code)
+node /path/to/proofwright/dist/src/cli.js init --copilot --yes   # …and for GitHub Copilot CLI too
 ```
 
-`init` installs Playwright's agents (`npx playwright init-agents --loop=claude`),
-adds Proofwright's MCP server next to Playwright's in `.mcp.json`, and creates
-`proofwright/config.json`. Playwright's `init-agents` replaces `.mcp.json`
-outright; `init` puts your other MCP servers back.
+`init` installs Playwright's agents (`npx playwright init-agents`), adds
+Proofwright's MCP server next to Playwright's in `.mcp.json`, adds the
+`/proofwright` command, and creates `proofwright/config.json`. Playwright's
+`init-agents` replaces `.mcp.json` outright; `init` puts your other MCP servers
+back. With `--copilot` it also installs Playwright's agents for Copilot
+(`.github/agents/`) and a Proofwright skill (`.github/skills/proofwright/`);
+Copilot CLI reads the same `.mcp.json` — trust the folder when it asks.
 
-## Try the whole flow on the demo shop (about 5 minutes)
+## What works where
+
+| | Works | Not yet |
+|---|---|---|
+| **Tests** | Playwright tests in TypeScript or JavaScript | Playwright for Python, Java or .NET; Cypress; Selenium |
+| **Apps** | Websites (anything you open in a browser) | Mobile and desktop apps |
+| **Claude Code, terminal** | Everything, including the Accept / Decline approval form | — |
+| **Claude desktop app** (Code tab) | Everything; you approve in the chat, in your own words | The approval form (the app declines forms without showing them) |
+| **GitHub Copilot CLI** | Proofwright's tools, the skill, Playwright's agents, long runs (tested: 150 s) | A full walkthrough there is untested |
+| **Other AI apps** (Antigravity, …) | Proofwright's tools work with any MCP app and any model | Untested; Playwright's agents aren't set up for them |
+| **prove** | What the page asks its server for (JSON APIs, forms), HTTP and HTTPS, Chromium | Calls between servers; WebSockets; Firefox and WebKit; Windows |
+
+## Try the whole flow on the demo shop
 
 ```sh
 npm install && npm run build
 claude          # Claude Code in this folder; allow the two project MCP servers it offers
 ```
 
-Then, in Claude Code:
-
-```
-/mcp__proofwright__proofwright check that coupon codes work at checkout
-```
-
-Playwright's planner explores the shop and saves a plan in `specs/`; Proofwright
-shows the test cases and what's open; you approve (in a form, in the terminal
-app — in your own words elsewhere); Playwright's generator writes the approved
-tests into `demo/generated/`; Proofwright reviews them, then proves them (a few
-minutes: it runs them with the shop's API broken on purpose). Then run
-`npm run test:generated` — some should fail on the shop's planted coupon bugs.
-Ask *"report on the generated tests"* and *"explain the first failure"*: `report`
-runs them through Playwright and names each failure; `explain` shows why. Don't
-start the shop yourself: Playwright starts it on port 4610 when it needs it.
+Then type `/proofwright check that coupon codes work at checkout`, and follow
+the steps. Don't start the shop yourself: Playwright starts it on port 4610
+when it needs it. Some tests should fail on the shop's planted coupon bugs —
+`explain` shows why, with a bug report for each.
 
 To see `report` and `explain` on failures of every kind — app bugs, test bugs,
 a flaky test, an unreachable service — without the agents:
@@ -107,7 +131,8 @@ The server works on the project Claude Code is running in; a tool call can
 name another with `root`. Or from a terminal:
 
 ```sh
-node dist/src/cli.js review demo/colleague      # the three-part answer
+node dist/src/cli.js guide                       # where you are, and the next step
+node dist/src/cli.js review demo/colleague      # the review, in a short table
 node dist/src/cli.js review demo/colleague --json
 node dist/src/cli.js prove tests/checkout.spec.ts --endpoint "POST /api/orders"   # break only that call
 ```

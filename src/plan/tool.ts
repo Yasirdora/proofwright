@@ -142,7 +142,7 @@ export async function approvePlan(
     did,
     found: renderSummary(cases, questions, casesRel),
     need,
-    next: approvedRel ? `Next: Playwright's generator writes one test per approved case from \`${approvedRel}\`.` : undefined,
+    next: approvedRel && drafts.length === 0 ? 'write the tests for the approved cases — say "write the tests".' : undefined,
     data: { plan: planRel, cases, casesFile: casesRel, ...(approvedRel ? { approvedPlan: approvedRel } : {}), approvedNow },
   };
 }

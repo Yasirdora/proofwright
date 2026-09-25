@@ -92,6 +92,15 @@ test("test data: a quantity of 1–99 marks the limits and the tricky values", (
   assert.ok(field(set, "Quantity").questions.some((q) => q.includes("1e2")));
 });
 
+test("test data: an address looks like one — not a sentence — with the unusual ones that break forms", () => {
+  const [address] = generate([{ name: "Address", kind: "address", required: true }], { seed: 1, today: new Date("2026-09-25") }).fields;
+  const typical = address.cases.filter((c) => c.group === "typical").map((c) => c.value);
+  assert.ok(typical.every((v) => /^(Flat \d+, )?\d+ [A-Z][a-z]+ (Street|Avenue|Road|Lane)$/.test(v)), typical.join(" | "));
+  const unusual = address.cases.filter((c) => c.group === "unusual").map((c) => c.probes);
+  for (const probe of ["Arabic, written right to left", "ß, with the number after the street", "markup — must show as text, never as formatting"]) assert.ok(unusual.includes(probe), probe);
+  assert.ok(address.cases.some((c) => c.value === "" && c.expect === "refuse"), "required: empty is refused");
+});
+
 test("test data: everything is made up — reserved email domains, fictional phone ranges", () => {
   const set = generate(
     [

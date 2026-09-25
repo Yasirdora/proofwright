@@ -19,6 +19,7 @@ export const FIELD_KINDS = [
   "email",
   "password",
   "text",
+  "address",
   "number",
   "date",
   "birthDate",
@@ -129,6 +130,9 @@ export function generate(fields: FieldSpec[], opts: { seed: number; today: Date 
 
 // ---------------------------------------------------------------- the values
 
+/** Street addresses that look real and aren't anyone's: a number and a common street name, no town. */
+const ADDRESSES = ["12 Market Street", "7 Linden Avenue", "45 Harbour Road", "3 Mill Lane", "28 Station Road", "9 Church Street"];
+
 const NAMES = [
   "Mara Lindqvist",
   "Tomás Ferreira",
@@ -225,6 +229,21 @@ function draftsFor(f: FieldSpec, rng: Random, today: Date): Draft[] {
         ...(f.maxLength === undefined
           ? [d("Lorem ipsum dolor sit amet. ".repeat(40).trim(), "about 1,100 characters — nothing should cut or break it", "unusual")]
           : []),
+      ];
+    case "address":
+      return [
+        d(rng.pick(ADDRESSES), "a typical street address", "typical"),
+        d("Flat 3, 45 Harbour Road", "a flat number and a comma", "typical"),
+        ...lengthLimits(f, "12 Market Street"),
+        d("", "left empty", "invalid"),
+        d("   ", "only spaces", "invalid"),
+        d("Hauptstraße 5", "ß, with the number after the street", "unusual"),
+        d("Rue de l'Église 7", "an apostrophe and an accent", "unusual"),
+        d("شارع الملك فهد 12", "Arabic, written right to left", "unusual"),
+        d("建国路 88号", "Chinese characters", "unusual"),
+        d("12 Market Street\nSecond floor", "a line break", "unusual"),
+        d("<b>12 Market Street</b>", "markup — must show as text, never as formatting", "unusual"),
+        d("  12 Market Street  ", "spaces before and after", "unusual", trimQuestion(f)),
       ];
     case "number":
       return numberDrafts(f, rng);

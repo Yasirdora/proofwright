@@ -3,7 +3,8 @@
  * proofwright — the command line.
  *
  *   proofwright mcp [--root DIR]                     start the MCP server on stdio
- *   proofwright init [--yes] [--root DIR]            set a Playwright project up
+ *   proofwright guide [--root DIR]                   where you are, and the next step
+ *   proofwright init [--yes] [--copilot] [--root DIR] set a Playwright project up
  *   proofwright review [PATH ...] [--root DIR] [--json]
  *   proofwright report [--run] [--project P] [--grep G] [--from FILE] [--root DIR]
  *   proofwright explain TEST [--run-id ID] [--root DIR]
@@ -11,6 +12,7 @@
  *   proofwright --version | --help
  */
 import { renderAnswer } from "./answer.js";
+import { guide } from "./guide/guide.js";
 import { init } from "./init.js";
 import { VERSION, serveStdio } from "./mcp/server.js";
 import { Project, ProjectError } from "./project.js";
@@ -23,9 +25,12 @@ const USAGE = `Proofwright ${VERSION} — works with a human tester on Playwrigh
 
 Usage:
   proofwright mcp [--root DIR]                       Start the MCP server (stdio)
-  proofwright init [--yes] [--root DIR]              Set a Playwright project up: Playwright's
-                                                     agents, Proofwright's MCP server, its config.
-                                                     Shows the changes; makes them only with --yes
+  proofwright guide [--root DIR]                     Where each test session is, and the next step
+  proofwright init [--yes] [--copilot] [--root DIR]  Set a Playwright project up: Playwright's
+                                                     agents, Proofwright's MCP server, its config,
+                                                     the /proofwright command (--copilot: for
+                                                     GitHub Copilot CLI too). Shows the changes;
+                                                     makes them only with --yes
   proofwright review [PATH ...] [--root DIR] [--json]
                                                      Review test scripts against the rules
   proofwright report [--run] [--project P] [--grep G] [--from FILE] [--root DIR]
@@ -76,8 +81,12 @@ async function main(argv: string[]): Promise<number> {
     case "mcp":
       await serveStdio(root);
       return -1; // keep running
+    case "guide": {
+      process.stdout.write(renderAnswer(guide(new Project(root))));
+      return 0;
+    }
     case "init": {
-      const answer = init(new Project(root), flag("--yes"));
+      const answer = init(new Project(root), flag("--yes"), { copilot: flag("--copilot") });
       process.stdout.write(renderAnswer(answer));
       return 0;
     }

@@ -382,3 +382,72 @@ one clock), so findings say `"Apply" (coupons-cart.spec.ts:264)` instead of
 `POST /api/cart/coupon`. A trace is read with a small zip reader (no new
 dependency); when one can't be read, the call is named instead.
 
+## 2026-09-25 · Guided, step by step: `/proofwright` and `guide`
+
+The owner asked for Proofwright to "become simple and user-friendly, just like
+some tools that help guide users through each step".
+
+- **One short command.** `init` adds `/proofwright` to a project
+  (`.claude/commands/proofwright.md`): with words, a new guided session; alone,
+  where you are and what's next. A command gets the tester's whole sentence
+  (`$ARGUMENTS`) — unlike an MCP prompt command, which Claude Code cuts to one
+  word. Its `argument-hint` is quoted: Copilot CLI reads Claude's commands too
+  and refuses an unquoted `[what to test]` as a list.
+- **The guide is a tool, not a file of state.** `guide` reads each session's
+  six steps from what's already saved — the plan, the test cases and approvals,
+  the approved plan's test files, a review of them, the latest proof — so it
+  knows where things stand after a break, a usage limit or a new session, in
+  any AI app. Review is advice, not a gate: its problems are listed and the
+  guide moves on to prove. With a request, `guide` returns the session's steps
+  for the AI (the same text as the prompt), not an answer for the tester.
+- **Every answer ends with the next step,** and what to say.
+
+## 2026-09-25 · The Claude desktop app: approval in the chat
+
+Measured in the desktop app 2.9939.2, which runs Claude Code 2.1.281 driven by
+the app: Claude Code tells MCP servers it can show forms (`elicitation`), and
+passes a form request up to the app — but the app's Code tab gives Claude Code
+no form handler, and the SDK then answers every form "decline", unseen. So a
+form there would make approval impossible. The desktop app marks the servers
+it starts (`CLAUDE_CODE_ENTRYPOINT=claude-desktop`, seen in a server's
+environment); there, Proofwright doesn't send the form and takes the tester's
+own words, recorded as relayed by the AI client. The app's Code tab loads
+project settings (`settingSources: user, project, local`), so `/proofwright`
+and Playwright's agents work there.
+
+## 2026-09-25 · GitHub Copilot CLI
+
+Measured with Copilot CLI 1.0.88: it connects to the servers in a project's
+`.mcp.json` (the Claude Code format works) once the folder is trusted; it tells
+servers it can show forms (`elicitation: form`), introduces itself as
+`copilot-cli`, and asks for tools but not prompts; it waited 150 s for one tool
+call and sends a progress token, so prove's progress reaches it. It finds
+skills in `.github/skills/` (and reads `.claude/`'s commands too).
+`init --copilot` installs Playwright's agents for Copilot
+(`init-agents --loop=copilot`: `.github/agents/`, `.vscode/mcp.json`), a
+Proofwright skill, and Playwright's test server in `.mcp.json`; it removes the
+workflow Playwright's Copilot setup adds for Copilot's *cloud* agent
+(`.github/workflows/copilot-setup-steps.yml`) — the CLI doesn't need it, and a
+workflow shouldn't appear in a repo unasked. A whole walkthrough in Copilot is
+still to be tried. Antigravity isn't among Playwright's agent setups
+(`claude, codex, copilot, opencode, vscode`); Proofwright's tools work with any
+MCP app, but that's untested.
+
+## 2026-09-25 · Small fixes from the second walkthrough
+
+- **A case keeps its number when it's edited.** Numbers were keyed by the
+  case's title, so rewording case 17 made it TC-019. A case that's gone from
+  the plan and a new one in the same place (same suite and position, or the
+  same test file) are the same case, edited: it keeps its number; its approval
+  lapses as for any change.
+- **Addresses look like addresses.** `test_data` had no address kind; the
+  session used "text", whose typical value is a sentence ("Please leave the
+  parcel …"). `address` gives street addresses, and the unusual ones (other
+  scripts, ß, markup, a line break).
+- **The generator's leftover app is stopped before prove** (it blocked prove in
+  both walkthroughs), and **steps are what a user can do on the page** — the
+  planner had removed a coupon through the API behind the page's back.
+- **init** passes the configured project to Playwright's setup (its seed test
+  landed in the shop's own tests), and writes `.mcp.json` only when a server
+  changes (it reformatted it).
+

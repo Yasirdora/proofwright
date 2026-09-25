@@ -72,6 +72,36 @@ test("cases: values are found as the planner writes them — quoted or not — a
   for (const [action, values, unsaid] of cases) assert.deepEqual(valuesOf(action), { values, unsaid }, action);
 });
 
+test("cases: a case edited in place keeps its number — renamed, or moved with its file; a new one in another place doesn't", () => {
+  const l = ledger();
+  const first = buildCases(COUPONS, l);
+  l.approvals["TC-002"] = { on: "2026-09-25", words: "yes", how: "asked you directly", fingerprint: first[1].fingerprint };
+
+  // The owner's second walkthrough: case 17 reworded ("Lower-case and mixed-case codes" →
+  // "Coupon codes work in any letter case") became TC-019. Renamed in place, it keeps its number.
+  const renamed: TestPlan = structuredClone(COUPONS);
+  renamed.suites[0].tests[1].name = "An expired coupon code is refused with a message";
+  const second = buildCases(renamed, l);
+  assert.deepEqual(second.map((c) => c.id), ["TC-001", "TC-002", "TC-003"]);
+  assert.equal(second[1].approval, undefined, "its content changed: the approval lapses");
+
+  // Moved to the end and renamed, with the same test file: still the same case.
+  const moved: TestPlan = structuredClone(renamed);
+  const [expired] = moved.suites[0].tests.splice(1, 1);
+  moved.suites[0].tests.push({ ...expired, name: "Expired coupons are refused" });
+  assert.equal(buildCases(moved, l).find((c) => c.name === "Expired coupons are refused")!.id, "TC-002");
+
+  // A different case where one was removed, with a different file and place: a new number.
+  const replaced: TestPlan = structuredClone(COUPONS);
+  replaced.suites[0].tests.splice(1, 1);
+  replaced.suites[0].tests.push({ name: "Two coupons can't be combined", file: "demo/generated/coupons/two.spec.ts", steps: [{ perform: "Apply SAVE10, then WELCOME5", expect: ["Only WELCOME5 is applied"] }] });
+  const third = buildCases(replaced, ledger());
+  assert.deepEqual(third.map((c) => c.id), ["TC-001", "TC-002", "TC-003"], "a fresh ledger just numbers them");
+  const l2 = ledger();
+  buildCases(COUPONS, l2);
+  assert.equal(buildCases(replaced, l2).find((c) => c.name === "Two coupons can't be combined")!.id, "TC-004");
+});
+
 test("cases: numbers stay put when the plan changes; a changed case loses its approval", () => {
   const l = ledger();
   const first = buildCases(COUPONS, l);

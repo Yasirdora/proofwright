@@ -84,6 +84,7 @@ export function review(project: Project, paths: string[]): Answer<ReviewData> {
       findings.length > 0
         ? ["Fix them in the tests, or send this list to the tests' author. I can fix them one at a time too: I'll show each change before making it."]
         : [],
+    ...(files.length > 0 ? { next: 'prove the tests can fail (it takes a few minutes) — say "prove the tests".' } : {}),
     data,
   };
 }

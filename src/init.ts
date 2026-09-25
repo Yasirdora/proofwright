@@ -7,6 +7,15 @@
  *   3. proofwright/config.json, for paths Proofwright must never read.
  *   4. proofwright/runs/ in .gitignore — run evidence (screenshots, traces)
  *      stays out of git; the reports don't.
+ *   5. The `/proofwright` command for Claude Code (.claude/commands/), in the
+ *      terminal and in the desktop app: it passes the tester's whole sentence.
+ *
+ * With --copilot, it also sets the project up for GitHub Copilot CLI:
+ * Playwright's agents for Copilot (.github/agents/), a Proofwright skill
+ * (.github/skills/proofwright/), and Playwright's test server in .mcp.json,
+ * which Copilot CLI reads too (measured with 1.0.88). Playwright's Copilot
+ * setup also writes a workflow for Copilot's cloud agent; the CLI doesn't need
+ * it, so init removes it unless it was already there.
  *
  * It shows what it would change and changes nothing without --yes. Playwright's
  * init-agents replaces .mcp.json outright, dropping the project's other MCP
@@ -32,7 +41,33 @@ export interface InitData {
 
 const CLI = fileURLToPath(new URL("./cli.js", import.meta.url));
 
-export function init(project: Project, apply: boolean): Answer<InitData> {
+/** `/proofwright` in Claude Code: the whole sentence arrives as $ARGUMENTS. */
+export const CLAUDE_COMMAND = `---
+description: Test with Proofwright, step by step — or see where you are and what's next
+argument-hint: "[what to test]"
+---
+Proofwright, for this tester.
+
+- If they wrote what to test — "$ARGUMENTS" — call Proofwright's \`guide\` tool with request set to exactly those words, then follow the session steps it returns. The steps are for you; don't show them to the tester.
+- If that is empty, call \`guide\` without a request, and show the tester its answer as it is.
+`;
+
+/** The same for GitHub Copilot CLI, as a skill. */
+export const COPILOT_SKILL = `---
+name: proofwright
+description: Test a web app with Proofwright, step by step — a plan, test cases the tester approves, Playwright tests, a review, and proof that the tests can fail. Use when the tester asks to test or check something with Proofwright, or asks where they are or what's next.
+---
+# Proofwright
+
+Use the \`guide\` tool of the proofwright MCP server.
+
+- The tester wants something tested: call \`guide\` with request set to their exact words, then follow the session steps it returns. The steps are for you; don't show them to the tester.
+- The tester asks where they are, or what's next: call \`guide\` without a request, and show them its answer as it is.
+`;
+
+const PLAYWRIGHT_SERVER = { command: "npx", args: ["playwright", "run-test-mcp-server"] };
+
+export function init(project: Project, apply: boolean, options: { copilot?: boolean } = {}): Answer<InitData> {
   const pkgFile = path.join(project.root, "package.json");
   if (!fs.existsSync(pkgFile)) throw new ProjectError("There's no package.json here — run init in the root of a Playwright project.");
   const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8")) as Record<string, Record<string, string> | undefined>;
@@ -48,12 +83,23 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
   const hasConfig = fs.existsSync(configFile);
   const gitignore = path.join(project.root, ".gitignore");
   const ignoresRuns = fs.existsSync(gitignore) && /^\/?proofwright\/runs\/?$/m.test(fs.readFileSync(gitignore, "utf8"));
+  const commandFile = path.join(project.root, ".claude/commands/proofwright.md");
+  const hasCommand = fs.existsSync(commandFile);
+  const copilot = options.copilot === true;
+  const hasCopilotAgents = fs.existsSync(path.join(project.root, ".github/agents/playwright-test-planner.agent.md"));
+  const skillFile = path.join(project.root, ".github/skills/proofwright/SKILL.md");
+  const hasSkill = fs.existsSync(skillFile);
+  const hasPlaywrightServer = Boolean(before.mcpServers?.["playwright-test"]);
 
   const planned = [
     ...(hasAgents ? [] : ["Install Playwright's test agents: `npx playwright init-agents --loop=claude` (the planner, the generator, their MCP server, a seed test, specs/)."]),
     ...(hasProofwright ? [] : ["Add Proofwright's MCP server to `.mcp.json`, next to Playwright's."]),
     ...(hasConfig ? [] : ["Create `proofwright/config.json` (paths Proofwright must never read — none yet)."]),
     ...(ignoresRuns ? [] : ["Add `proofwright/runs/` to `.gitignore`, so run evidence (screenshots, traces) stays out of git."]),
+    ...(hasCommand ? [] : ["Add the `/proofwright` command for Claude Code (`.claude/commands/proofwright.md`)."]),
+    ...(copilot && !hasCopilotAgents ? ["For GitHub Copilot CLI: install Playwright's agents for Copilot (`npx playwright init-agents --loop=copilot`: `.github/agents/`, `.vscode/mcp.json`)."] : []),
+    ...(copilot && !hasSkill ? ["For GitHub Copilot CLI: add a Proofwright skill (`.github/skills/proofwright/SKILL.md`)."] : []),
+    ...(copilot && !hasPlaywrightServer && hasAgents ? ["For GitHub Copilot CLI: add Playwright's test server to `.mcp.json`."] : []),
   ];
   const otherServers = Object.keys(before.mcpServers ?? {}).filter((n) => n !== "proofwright" && n !== "playwright-test");
 
@@ -63,7 +109,7 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
       did: ["Checked Playwright's agents, `.mcp.json` and `proofwright/config.json`. Nothing was changed."],
       found: "Playwright's agents, Proofwright's MCP server, Proofwright's config and the .gitignore entry are all in place.",
       need: [],
-      next: "In Claude Code, try: /mcp__proofwright__proofwright check that … works",
+      next: "in Claude Code, try: `/proofwright check that … works`.",
       data: { planned, done: [], restoredServers: [] },
     };
   }
@@ -85,8 +131,11 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
 
   const done: string[] = [];
   let restoredServers: string[] = [];
+  // Playwright's setup writes its seed test into the first project in the config unless told
+  // which one: the project Proofwright's config names, when it names one.
+  const forProject = project.config.project ? ["--project", project.config.project] : [];
   if (!hasAgents) {
-    execFileSync("npx", ["--no-install", "playwright", "init-agents", "--loop=claude"], {
+    execFileSync("npx", ["--no-install", "playwright", "init-agents", "--loop=claude", ...forProject], {
       cwd: project.root,
       stdio: "pipe",
       env: { ...process.env, CI: "1" },
@@ -98,7 +147,9 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
   restoredServers = otherServers.filter((n) => !(n in servers));
   for (const n of restoredServers) servers[n] = before.mcpServers![n];
   servers.proofwright ??= { command: process.execPath, args: [CLI, "mcp"] };
-  fs.writeFileSync(mcpFile, `${JSON.stringify({ ...before, ...after, mcpServers: servers }, null, 2)}\n`);
+  const merged = { ...before, ...after, mcpServers: servers };
+  // Written only when a server changes — never just reformatted.
+  if (JSON.stringify(merged) !== JSON.stringify(readMcp(mcpFile))) fs.writeFileSync(mcpFile, `${JSON.stringify(merged, null, 2)}\n`);
   if (!hasProofwright) done.push("Added Proofwright's MCP server to `.mcp.json`.");
   if (restoredServers.length > 0) done.push(`Put back the MCP servers Playwright's init-agents removed from \`.mcp.json\`: ${restoredServers.join(", ")}.`);
   if (!hasConfig) {
@@ -111,6 +162,33 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
     fs.writeFileSync(gitignore, `${before}${before && !before.endsWith("\n") ? "\n" : ""}\n# Proofwright's run evidence (screenshots, traces)\nproofwright/runs/\n`);
     done.push("Added `proofwright/runs/` to `.gitignore`.");
   }
+  if (!hasCommand) {
+    fs.mkdirSync(path.dirname(commandFile), { recursive: true });
+    fs.writeFileSync(commandFile, CLAUDE_COMMAND);
+    done.push("Added the `/proofwright` command for Claude Code.");
+  }
+  if (copilot) {
+    if (!hasCopilotAgents) {
+      const workflow = path.join(project.root, ".github/workflows/copilot-setup-steps.yml");
+      const hadWorkflow = fs.existsSync(workflow);
+      execFileSync("npx", ["--no-install", "playwright", "init-agents", "--loop=copilot", ...forProject], { cwd: project.root, stdio: "pipe", env: { ...process.env, CI: "1" } });
+      done.push("Installed Playwright's agents for GitHub Copilot (`.github/agents/`, and `.vscode/mcp.json` for VS Code).");
+      if (!hadWorkflow && fs.existsSync(workflow)) {
+        fs.rmSync(workflow);
+        done.push("Removed the workflow Playwright's Copilot setup adds for Copilot's cloud agent (`.github/workflows/copilot-setup-steps.yml`): Copilot CLI doesn't need it.");
+      }
+    }
+    if (!hasSkill) {
+      fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+      fs.writeFileSync(skillFile, COPILOT_SKILL);
+      done.push("Added a Proofwright skill for GitHub Copilot CLI.");
+    }
+    const current = readMcp(mcpFile);
+    if (!current.mcpServers?.["playwright-test"]) {
+      fs.writeFileSync(mcpFile, `${JSON.stringify({ ...current, mcpServers: { ...(current.mcpServers ?? {}), "playwright-test": PLAYWRIGHT_SERVER } }, null, 2)}\n`);
+      done.push("Added Playwright's test server to `.mcp.json`, where Copilot CLI finds it.");
+    }
+  }
 
   return {
     headline: "This project is set up for Proofwright.",
@@ -118,10 +196,10 @@ export function init(project: Project, apply: boolean): Answer<InitData> {
     found: [
       "Playwright's planner and generator explore and write; Proofwright makes the test cases you approve, reviews every test, and makes the test data.",
       "",
-      "Playwright also installed its **healer** agent. Proofwright never uses it — it changes what tests expect in order to pass them. You can delete `.claude/agents/playwright-test-healer.md` if you don't want it offered.",
+      `Playwright also installed its **healer** agent. Proofwright never uses it — it changes what tests expect in order to pass them. You can delete \`.claude/agents/playwright-test-healer.md\`${copilot ? " and `.github/agents/playwright-test-healer.agent.md`" : ""} if you don't want it offered.`,
     ].join("\n"),
     need: [],
-    next: "Restart Claude Code in this project, then try: /mcp__proofwright__proofwright check that … works",
+    next: `restart Claude Code in this project, then try: \`/proofwright check that … works\`${copilot ? " — in Copilot CLI, ask it to use Proofwright to check that … works (trust the folder when it asks)" : ""}.`,
     data: { planned, done, restoredServers },
   };
 }

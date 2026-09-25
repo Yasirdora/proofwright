@@ -62,7 +62,7 @@ export async function proveTool(project: Project, input: ProveInput, progress?: 
     did,
     found,
     need,
-    next: "Every test noticed its own steps failing.",
+    ...(proof.stopped ? {} : { next: nextStep(proof.tests) }),
     data: {
       id: proof.id,
       reportFile,
@@ -82,6 +82,15 @@ export async function proveTool(project: Project, input: ProveInput, progress?: 
       unmatched: proof.unmatched,
     },
   };
+}
+
+/** The session's next step after a proof, and what to say. */
+function nextStep(tests: ProvenTest[]): string {
+  const weak = tests.filter((t) => t.verdict === "misses its own action" || t.verdict === "can't fail").length;
+  const failing = tests.filter((t) => t.verdict === "not proven" && /already fails with nothing broken/.test(t.result)).length;
+  if (weak > 0) return `make the ${weak === 1 ? "test" : `${weak} tests`} marked ❌ check what ${weak === 1 ? "its" : "their"} own step did — say "fix the tests prove flagged", and I'll show each change first.`;
+  if (failing > 0) return `find out why ${failing === 1 ? "a test fails" : `${failing} tests fail`} with nothing broken — say "explain the failing tests" for the reasons and bug reports.`;
+  return "test something else — `/proofwright <what to test>`.";
 }
 
 function tally(tests: ProvenTest[]): string {

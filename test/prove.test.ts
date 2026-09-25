@@ -179,6 +179,7 @@ test(`prove, over MCP: the coupon test stays green while "Apply" fails; checkout
     assert.ok(t.startsWith("**5 tests checked: 3 need a better check, 1 is good, 1 can't be checked yet.**"), t.slice(0, 160));
     assert.match(t, /\| \[coupon works\]\(demo\/colleague\/checkout\.spec\.ts:25\) \| ❌ Stays green when "Apply" \(checkout\.spec\.ts:30\) fails\. \|/);
     assert.match(t, /No call matched "nothing-like-this"\./);
+    assert.match(t, /\*\*Next:\*\* make the 3 tests marked ❌ check what their own step did — say "fix the tests prove flagged"/);
     assert.ok(t.length < 4000, `the answer is ${t.length} characters`);
     // The data for the AI is small — a summary; the whole proof is in a file.
     assert.deepEqual(Object.keys(proof).sort(), ["counts", "id", "proofFile", "reportFile", "tests", "unmatched"]);

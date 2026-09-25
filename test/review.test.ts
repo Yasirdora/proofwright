@@ -86,6 +86,7 @@ test("review: the answer is short — result, one row per problem with what to d
   assert.ok(text.includes("| [wip.spec.ts:3](demo/colleague/wip.spec.ts:3) | **Must fix:** `.only` left in | Remove `.only`."));
   assert.ok(text.includes("**Why these matter**"));
   assert.ok(text.includes("**What to do**\nFix them in the tests, or send this list to the tests' author."));
+  assert.ok(text.includes('**Next:** prove the tests can fail (it takes a few minutes) — say "prove the tests".'));
   assert.match(text, /\*What I did: Read 1 test file \(2 tests\) .* Nothing was run or changed\.\*\n$/);
   // The plugin's own wording only restates the problem: it isn't repeated.
   assert.doesNotMatch(text, /Unexpected focused test/);

@@ -62,6 +62,7 @@ expects without your yes, and never calls something "done" without proof.
 
 | Tool | What it does | State |
 |---|---|---|
+| `guide` | Where the tester is in each test session, and the one next step — read from what's saved, so it works after a break. With a request, the steps of a new guided session. | done |
 | `review` | Checks test scripts — Playwright's generator's, yours or a colleague's — against the rules in section 5. Same answer every time. | done (M1a) |
 | `test_data` | Seeded, made-up data for the cases' fields: valid, limits, invalid, other scripts, long, empty — each marked accept or refuse from your rules, or asked. | done (M1a) |
 | `approve_plan` | Turns the planner's draft into test cases (section 4), shows what's open, and records your approval, in your words. The only way a case becomes approved. | M1b |
@@ -69,9 +70,11 @@ expects without your yes, and never calls something "done" without proof.
 | `report` | The one-page summary, with every run compared to the last. | M2 |
 | `prove` | Runs tests while breaking the app on purpose (section 6); reports which faults each test catches and which tests can't fail. | M3 |
 
-Plus an MCP **prompt**, `/proofwright`, that runs the session above from one
-plain sentence, calling Playwright's agents and Proofwright's tools in turn —
-the "prompt engineer" step, done in the open.
+Plus the **`/proofwright` command** (Claude Code, in the terminal and the
+desktop app; a skill in GitHub Copilot CLI), and an MCP **prompt** for other
+apps, that run the session above from one plain sentence, calling Playwright's
+agents and Proofwright's tools in turn — the "prompt engineer" step, done in
+the open. Every answer ends with the next step.
 
 **Used from Playwright, not rebuilt:** the planner and the generator
 (`npx playwright init-agents`), and its test tools (`test_run`, `test_debug`,

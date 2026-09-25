@@ -70,6 +70,7 @@ test("approve_plan: asked directly, the tester's answer decides — the AI's wor
     TODAY,
   );
   assert.deepEqual(yes.data.approvedNow, ["TC-001", "TC-002"], "all approvable cases; TC-003 can't be");
+  assert.match(renderAnswer(yes), /\*\*Next:\*\* write the tests for the approved cases — say "write the tests"\./);
   assert.match(asked, /^Approve 2 test cases\?/);
   assert.match(asked, /^2 open questions \(in the test cases file\): approving accepts them as they are\.$/m);
   assert.match(asked, /^Accept = approve these cases\. {3}Decline = approve nothing\.$/m);

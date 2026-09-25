@@ -3,7 +3,7 @@
  * format (answer.ts) as text for the tester, with the same result as
  * structured content for the client.
  *
- * Tools: `review`, `test_data` (M1a), `approve_plan` (M1b), `report`,
+ * Tools: `guide`, `review`, `test_data` (M1a), `approve_plan` (M1b), `report`,
  * `explain` (M2), `prove` (M3). Prompt:
  * `proofwright` — the guided session over Playwright's own agents.
  */
@@ -26,7 +26,8 @@ import { DEFAULT_MAX_RUNS, DEFAULT_SLOW_MS } from "../prove/prove.js";
 import { FAULT_KINDS, type FaultKind } from "../prove/proxy.js";
 import { proveTool } from "../prove/tool.js";
 import { explain, report } from "../runs/tools.js";
-import { PROMPTS, renderPrompt } from "./prompts.js";
+import { guide } from "../guide/guide.js";
+import { PROMPTS, renderPrompt, sessionText } from "./prompts.js";
 import { Project, ProjectError } from "../project.js";
 import { review } from "../review/review.js";
 
@@ -40,7 +41,8 @@ Write to the tester the same way: clear, simple English, short sentences, only w
 Expected results come from the tester's request and from what the app promises (its requirements, its documentation, what a user sees) — never from the app's source code. Don't read the app's code to decide what's right: a test written from the code confirms its bugs.
 Never change what a test expects, and never mark anything approved, without the tester's explicit yes: pass approve_plan the tester's own words, exactly as they said them — never your own.
 Playwright's own agents explore, write and run (the playwright-test-planner and playwright-test-generator); Proofwright doesn't replace them. Never use the playwright-test-healer: it changes what tests expect to make them pass.
-prove runs the tests many times and takes minutes: tell the tester before you call it.`;
+prove runs the tests many times and takes minutes: tell the tester before you call it.
+When the tester asks where they are or what's next — or starts a new request — call guide: without a request it gives their status and the next step; with one, the steps of a guided session, which are for you to follow (don't show them to the tester).`;
 
 const ROOT_PROPERTY = {
   type: "string",
@@ -52,12 +54,30 @@ interface Tool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  run: (project: Project, args: Record<string, unknown>, ask?: AskTester, progress?: Progress) => Answer | Promise<Answer>;
+  /** An Answer for the tester — or plain text meant for the AI (the guide's session steps). */
+  run: (project: Project, args: Record<string, unknown>, ask?: AskTester, progress?: Progress) => Answer | string | Promise<Answer>;
 }
 
 type Progress = (message: string, done: number, total: number) => void;
 
 const TOOLS: Tool[] = [
+  {
+    name: "guide",
+    description:
+      "Where the tester is, and the one next step. Without a request: every test session's six steps (plan, test cases, approval, tests, review, prove), read from what's saved in the project — so it works after a break or in a new session — and exactly what to say next. With a request (the tester's words): the steps of a new guided session, for you to follow. Reads only; runs and changes nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        request: { type: "string", description: "What the tester wants to test, in their exact words. Omit to get where they are and what's next." },
+        root: ROOT_PROPERTY,
+      },
+      additionalProperties: false,
+    },
+    run: (project, args) => {
+      const request = optional(args.request, "string", "request")?.trim();
+      return request ? sessionText(request, project) : guide(project);
+    },
+  },
   {
     name: "review",
     description:
@@ -300,6 +320,12 @@ export const FORM_TIMEOUT_MS = 15 * 60_000;
 export interface ServerOptions {
   /** How long the approval form waits (tests use a short one). */
   formTimeoutMs?: number;
+  /**
+   * Running in the Claude desktop app's Code tab, which answers every form "decline"
+   * without showing it. Default: what Claude Code tells the servers it starts
+   * (CLAUDE_CODE_ENTRYPOINT=claude-desktop).
+   */
+  desktopApp?: boolean;
 }
 
 export function createServer(defaultRoot: string, options: ServerOptions = {}): Server {
@@ -308,6 +334,7 @@ export function createServer(defaultRoot: string, options: ServerOptions = {}): 
     { capabilities: { tools: {}, prompts: {} }, instructions: INSTRUCTIONS },
   );
   const formTimeoutMs = options.formTimeoutMs ?? FORM_TIMEOUT_MS;
+  const desktopApp = options.desktopApp ?? process.env.CLAUDE_CODE_ENTRYPOINT === "claude-desktop";
 
   /**
    * Ask the tester directly, when the client can show a form (MCP elicitation).
@@ -316,6 +343,10 @@ export function createServer(defaultRoot: string, options: ServerOptions = {}): 
    */
   const askTester = (): AskTester | undefined => {
     if (!server.getClientCapabilities()?.elicitation) return undefined;
+    // The Claude desktop app's Code tab runs Claude Code, which tells servers it can show
+    // forms — but the app answers every form "decline" without showing it (measured in
+    // 2.9939.2 / Claude Code 2.1.281). There, the tester approves in the chat, in their words.
+    if (desktopApp) return undefined;
     return async (message) => {
       let result;
       try {
@@ -377,6 +408,7 @@ export function createServer(defaultRoot: string, options: ServerOptions = {}): 
     try {
       const project = new Project(optional(args.root, "string", "root") ?? defaultRoot);
       const answer = await tool.run(project, args, askTester(), progress);
+      if (typeof answer === "string") return { content: [{ type: "text", text: answer }] };
       return {
         content: [{ type: "text", text: renderAnswer(answer) }],
         structuredContent: {
