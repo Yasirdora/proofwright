@@ -23,6 +23,8 @@ test("init: shows what it would change, and changes nothing without --yes", () =
   const a = init(new Project(dir), false);
   assert.equal(a.data.planned.length, 5);
   assert.deepEqual(a.need, ["If that's what you want, run `proofwright init --yes`."]);
+  // Asked with --copilot and --antigravity, it names them again: without them, --yes wouldn't do those parts.
+  assert.deepEqual(init(new Project(dir), false, { copilot: true, antigravity: true }).need, ["If that's what you want, run `proofwright init --copilot --antigravity --yes`."]);
   assert.deepEqual(fs.readdirSync(dir).sort(), ["node_modules", "package.json", "playwright.config.ts"]);
 });
 

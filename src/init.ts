@@ -170,7 +170,8 @@ export function init(project: Project, apply: boolean, options: { copilot?: bool
           ? [`\nPlaywright's init-agents replaces \`.mcp.json\`; your other MCP servers (${otherServers.join(", ")}) would be put back afterwards.`]
           : []),
       ].join("\n"),
-      need: ["If that's what you want, run `proofwright init --yes`."],
+      // The same flags again: without them, --yes wouldn't do the Copilot or Antigravity part.
+      need: [`If that's what you want, run \`proofwright init${copilot ? " --copilot" : ""}${antigravity ? " --antigravity" : ""} --yes\`.`],
       data: { planned, done: [], restoredServers: [] },
     };
   }
