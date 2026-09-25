@@ -3,14 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { renderAnswer } from "../src/answer.js";
 import { Project, ProjectError } from "../src/project.js";
 import { classify } from "../src/runs/classify.js";
 import { compare, type Run, type RunTest } from "../src/runs/runs.js";
 import { explain, report } from "../src/runs/tools.js";
-
-const REPO = fileURLToPath(new URL("../../", import.meta.url));
+import { demoCopy, freePort } from "./fixtures.js";
 
 /** What each failure really is — demo/answer-key/FAILURES.md. */
 const KEY: Record<string, string> = {
@@ -23,19 +21,9 @@ const KEY: Record<string, string> = {
   "the stock service answers": "environment",
 };
 
-/** A throwaway copy of the demo — the shop and the failure suite — on a port of its own. */
-function demoCopy(): Project {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-runs-"));
-  for (const rel of ["package.json", "playwright.config.ts", "demo/shop", "demo/failures"]) {
-    fs.cpSync(path.join(REPO, rel), path.join(dir, rel), { recursive: true });
-  }
-  fs.symlinkSync(path.join(REPO, "node_modules"), path.join(dir, "node_modules"), "dir");
-  return new Project(dir);
-}
-
-test("report runs Playwright's runner and names every failure the way the answer key does", () => {
-  const project = demoCopy();
-  process.env.SHOP_PORT = String(4620 + Math.floor(Math.random() * 60));
+test("report runs Playwright's runner and names every failure the way the answer key does", async () => {
+  const project = demoCopy(["demo/failures"]);
+  process.env.SHOP_PORT = await freePort();
   try {
     const first = report(project, { run: { project: "failures" } });
     assert.equal(first.headline, "8 tests: 1 passed, 6 failed, 1 flaky.");
@@ -64,6 +52,25 @@ test("report runs Playwright's runner and names every failure the way the answer
     assert.match(second.headline, /— 0 new failures, 0 fixed since the last run\.$/);
     assert.equal(second.data.previous, first.data.run.id);
     assert.match(second.found, /Still failing: "SAVE10 on a notebook/);
+  } finally {
+    delete process.env.SHOP_PORT;
+  }
+});
+
+test("report says when a test.only let only part of the selection run", async () => {
+  const project = demoCopy(["demo/colleague"]);
+  process.env.SHOP_PORT = await freePort();
+  try {
+    // demo/colleague/wip.spec.ts:3 is a test.only: Playwright runs it alone, and says nothing of the other 7.
+    const r = report(project, { run: { project: "colleague" } });
+    assert.deepEqual(r.data.run.focused, ["demo/colleague/wip.spec.ts:3"]);
+    assert.equal(r.headline, "1 test: 1 passed, 0 failed, 0 flaky. Only the tests marked test.only ran.");
+    assert.match(r.found, /^\*\*Only part of the selection ran\.\*\* .*\[demo\/colleague\/wip\.spec\.ts:3\]/);
+    assert.match(r.need[0], /^Remove the `\.only` at `demo\/colleague\/wip\.spec\.ts:3`/);
+    // Naming the other file leaves the .only out of the selection: the whole selection runs.
+    const whole = report(project, { run: { paths: ["demo/colleague/checkout.spec.ts"], project: "colleague", grep: "sign up" } });
+    assert.equal(whole.data.run.focused, undefined);
+    assert.doesNotMatch(whole.headline, /test\.only/);
   } finally {
     delete process.env.SHOP_PORT;
   }

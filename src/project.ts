@@ -33,10 +33,14 @@ export class Project {
   private readonly ignored: RegExp[];
 
   constructor(root: string) {
-    const abs = path.resolve(root);
-    if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
-      throw new ProjectError(`The project folder doesn't exist: ${abs}`);
+    const given = path.resolve(root);
+    if (!fs.existsSync(given) || !fs.statSync(given).isDirectory()) {
+      throw new ProjectError(`The project folder doesn't exist: ${given}`);
     }
+    // Its real path: Playwright reports files by their real paths (on macOS,
+    // /var is /private/var), and a project reached through a symlink must still
+    // know its own files when Playwright names them.
+    const abs = fs.realpathSync(given);
     this.root = abs;
     this.config = readConfig(abs);
     this.ignored = this.config.ignore.map(globToRegExp);
@@ -52,7 +56,9 @@ export class Project {
    * a tool never reads or writes beyond the folder the tester pointed it at.
    */
   resolve(input: string): string {
-    const abs = path.resolve(this.root, input);
+    const resolved = path.resolve(this.root, input);
+    // An absolute path given through a symlink is judged by where it really is.
+    const abs = path.isAbsolute(input) && fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
     const rel = path.relative(this.root, abs);
     if (rel.startsWith("..") || path.isAbsolute(rel)) {
       throw new ProjectError(`${input} is outside the project (${this.root}).`);

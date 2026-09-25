@@ -14,10 +14,11 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.build.json",
     "test": "npm run test:unit && npm run test:demo",
-    "test:unit": "npm run build && node --test dist/test/*.test.js",
+    "test:unit": "npm run build && node --test --test-force-exit dist/test/*.test.js",
     "test:demo": "playwright test --project=shop --project=answer-key",
     "test:colleague": "playwright test --project=colleague",
     "test:generated": "playwright test --project=generated",
+    "accept:prove": "npm run build && node --test --test-force-exit dist/test/accept-prove.js",
     "shop": "node demo/shop/server.mjs"
   },
   "dependencies": {

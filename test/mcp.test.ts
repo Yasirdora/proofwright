@@ -34,11 +34,11 @@ async function connect(root: string, withForm?: (message: string) => { approve: 
 const text = (r: unknown) => (r as { content: Array<{ text: string }> }).content.map((c) => c.text).join("\n");
 const isError = (r: unknown) => (r as { isError?: boolean }).isError === true;
 
-test("mcp: offers its five tools, with schemas and instructions", async () => {
+test("mcp: offers its six tools, with schemas and instructions", async () => {
   const client = await connect(REPO);
   try {
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((t) => t.name).sort(), ["approve_plan", "explain", "report", "review", "test_data"]);
+    assert.deepEqual(tools.map((t) => t.name).sort(), ["approve_plan", "explain", "prove", "report", "review", "test_data"]);
     for (const t of tools) assert.ok(t.description && t.description.length > 80 && t.inputSchema.type === "object");
     assert.match(client.getInstructions() ?? "", /What I did, What I found, What I need from you/);
     assert.equal(client.getServerVersion()?.name, "proofwright");
@@ -170,6 +170,9 @@ test("mcp: the proofwright prompt turns one sentence into the guided session", a
       "specs/coupon-codes-work-checkout.approved.md",
       "review",
       "Never use the playwright-test-healer",
+      "call Proofwright's prove",
+      'with paths set to the files the generator wrote and project "generated"',
+      "the tester decides how",
       // this repository's proofwright/config.json
       'project "generated" and seed file "demo/generated/seed.spec.ts"',
       "under `demo/generated/`",

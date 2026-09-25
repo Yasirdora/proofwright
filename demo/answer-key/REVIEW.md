@@ -26,10 +26,21 @@ rest with its own checks; every finding names which one found it.
 
 Clean files for the "nothing on clean files" check: everything in `demo/tests/`.
 
-## Tests that can't fail (`prove`, spec §6)
+## What `prove` shows (spec §6), measured
 
-| Test | File:line | Why it can't fail |
-|---|---|---|
-| "coupon works" | `checkout.spec.ts:25` | Its only check is that `<body>` is visible — it passes if the coupon API errors, or the discount is wrong |
-| "add to cart works" | `checkout.spec.ts:20` | No check at all |
-| "checkout" | `checkout.spec.ts:34` | Its thank-you check is not awaited (`:46`); it passes as long as the text `Order PW-…` appears |
+`npm run accept:prove` proves `checkout.spec.ts` with the default faults (each
+API call failing with a server error, a list-bearing read answering with empty
+lists, and every answer 1 s late) and checks these verdicts:
+
+| Test | File:line | Verdict | Why |
+|---|---|---|---|
+| "user can sign up" | `checkout.spec.ts:9` | Passes when its own action fails | No assertion: it passes when POST /api/signup fails |
+| "add to cart works" | `checkout.spec.ts:20` | Passes when its own action fails | No assertion: it passes when POST /api/cart/items fails |
+| "coupon works" | `checkout.spec.ts:25` | Passes when its own action fails | Its only check is that `<body>` is visible: it passes when POST /api/cart/coupon fails |
+| "checkout" | `checkout.spec.ts:34` | Catches | Its thank-you check is never awaited (`:46`), but reading the order number (`:47`) fails when logging in or placing the order fails. It also fails when sign-up fails, a call it doesn't make: it needs the account "user can sign up" created |
+| "order number is shown" | `checkout.spec.ts:50` | Not proven | It makes no API calls; it only reads what "checkout" left in `orderNumber` |
+| "recommendations load" | `checkout.spec.ts:57` | Not proven | Flaky: it fails and then passes with nothing changed (see the retries row above) |
+
+An earlier version of this key said "checkout" can't fail. Measured, it can:
+the order-number line catches a failed order. That version also left out
+"user can sign up", which passes when signing up fails.

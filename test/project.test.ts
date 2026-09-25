@@ -34,6 +34,24 @@ test("project: paths outside the project are refused", () => {
   assert.equal(p.relative(p.resolve("a/b.ts")), "a/b.ts");
 });
 
+test("project: reached through a symlink, it still knows its own files by their real paths", () => {
+  const real = fs.realpathSync(tempProject());
+  fs.mkdirSync(path.join(real, "tests"));
+  fs.writeFileSync(path.join(real, "tests/a.spec.ts"), "");
+  const link = path.join(fs.realpathSync(os.tmpdir()), `proofwright-link-${process.pid}-${Date.now()}`);
+  fs.symlinkSync(real, link, "dir");
+  try {
+    const p = new Project(link);
+    assert.equal(p.root, real);
+    // Playwright names files by their real path; a tester may give either.
+    assert.equal(p.relative(path.join(real, "tests/a.spec.ts")), "tests/a.spec.ts");
+    assert.equal(p.relative(p.resolve(path.join(link, "tests/a.spec.ts"))), "tests/a.spec.ts");
+    assert.throws(() => p.resolve(path.join(link, "../elsewhere")), ProjectError);
+  } finally {
+    fs.rmSync(link);
+  }
+});
+
 test("project: the ignore list keeps paths out, and collectFiles reports them", () => {
   const dir = tempProject({ ignore: ["secret"] });
   fs.mkdirSync(path.join(dir, "secret"));

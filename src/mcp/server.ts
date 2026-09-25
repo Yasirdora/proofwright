@@ -4,7 +4,7 @@
  * structured content for the client.
  *
  * Tools: `review`, `test_data` (M1a), `approve_plan` (M1b), `report`,
- * `explain` (M2). Prompt:
+ * `explain` (M2), `prove` (M3). Prompt:
  * `proofwright` — the guided session over Playwright's own agents.
  */
 import * as fs from "node:fs";
@@ -20,6 +20,9 @@ import { type Answer, renderAnswer } from "../answer.js";
 import { CHARACTER_KINDS, DataError, FIELD_KINDS, type FieldSpec } from "../data/generate.js";
 import { testData } from "../data/tool.js";
 import { approvePlan, type AskTester } from "../plan/tool.js";
+import { DEFAULT_MAX_RUNS, DEFAULT_SLOW_MS } from "../prove/prove.js";
+import { FAULT_KINDS, type FaultKind } from "../prove/proxy.js";
+import { proveTool } from "../prove/tool.js";
 import { explain, report } from "../runs/tools.js";
 import { PROMPTS, renderPrompt } from "./prompts.js";
 import { Project, ProjectError } from "../project.js";
@@ -32,7 +35,8 @@ export const VERSION: string = JSON.parse(
 const INSTRUCTIONS = `Proofwright works with a human tester on Playwright tests.
 Every tool answers in three parts — What I did, What I found, What I need from you — show the tester that answer as it is, and put the questions in "What I need from you" to them rather than answering them yourself.
 Never change what a test expects, and never mark anything approved, without the tester's explicit yes: pass approve_plan the tester's own words, exactly as they said them — never your own.
-Playwright's own agents explore, write and run (the playwright-test-planner and playwright-test-generator); Proofwright doesn't replace them. Never use the playwright-test-healer: it changes what tests expect to make them pass.`;
+Playwright's own agents explore, write and run (the playwright-test-planner and playwright-test-generator); Proofwright doesn't replace them. Never use the playwright-test-healer: it changes what tests expect to make them pass.
+prove runs the tests many times and takes minutes: tell the tester before you call it.`;
 
 const ROOT_PROPERTY = {
   type: "string",
@@ -44,8 +48,10 @@ interface Tool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  run: (project: Project, args: Record<string, unknown>, ask?: AskTester) => Answer | Promise<Answer>;
+  run: (project: Project, args: Record<string, unknown>, ask?: AskTester, progress?: Progress) => Answer | Promise<Answer>;
 }
+
+type Progress = (message: string, done: number, total: number) => void;
 
 const TOOLS: Tool[] = [
   {
@@ -235,6 +241,53 @@ const TOOLS: Tool[] = [
       return explain(project, { test, ...(args.run !== undefined ? { run: optional(args.run, "string", "run") } : {}) });
     },
   },
+  {
+    name: "prove",
+    description:
+      "Prove tests can fail: run them with the app broken on purpose and show which notice. Proofwright runs them once with nothing broken to learn which API calls each test makes, then once per call with that call failing (a server error, or empty lists), and once with every answer late. A test that still passes when its own action fails (a POST, PUT, PATCH or DELETE it makes) is reported with a screenshot and a trace of the page it passed on. Works on any Playwright test through a temporary config beside the tester's, without changing their tests or config. Takes minutes: one run per call broken; stops first and asks when it would take more than maxRuns.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        paths: { type: "array", items: { type: "string" }, description: "Test files or folders, relative to the project. Omit to prove every test." },
+        project: { type: "string", description: "A Playwright project name from the config." },
+        grep: { type: "string", description: "Only tests whose title matches this." },
+        endpoints: {
+          type: "array",
+          items: { type: "string" },
+          description: 'Break only the calls whose name contains one of these, e.g. ["POST /api/cart/coupon"] or ["coupon"]. Omit to break every API call the tests make.',
+        },
+        faults: {
+          type: "array",
+          items: { type: "string", enum: [...FAULT_KINDS] },
+          description: 'How to break calls. Default ["error", "empty", "slow"]; "malformed" (broken JSON) is extra.',
+        },
+        maxRuns: { type: "integer", minimum: 1, maximum: 1000, description: `Stop before breaking anything when a proof needs more runs than this. Default ${DEFAULT_MAX_RUNS}.` },
+        slowMs: { type: "integer", minimum: 100, maximum: 20000, description: `How late every answer comes in the slow run, in ms. Default ${DEFAULT_SLOW_MS}.` },
+        config: { type: "string", description: "The Playwright config the tests use, relative to the project. Default: playwright.config.* at the root." },
+        root: ROOT_PROPERTY,
+      },
+      additionalProperties: false,
+    },
+    run: (project, args, _ask, progress) => {
+      const faults = args.faults === undefined ? undefined : stringList(args.faults, "faults");
+      const wrong = faults?.find((f) => !(FAULT_KINDS as readonly string[]).includes(f));
+      if (wrong) throw new ProjectError(`"${wrong}" isn't a fault Proofwright knows: ${FAULT_KINDS.join(", ")}.`);
+      return proveTool(
+        project,
+        {
+          ...(args.paths !== undefined ? { paths: stringList(args.paths, "paths") } : {}),
+          ...(args.project !== undefined ? { project: optional(args.project, "string", "project") } : {}),
+          ...(args.grep !== undefined ? { grep: optional(args.grep, "string", "grep") } : {}),
+          ...(args.endpoints !== undefined ? { endpoints: stringList(args.endpoints, "endpoints") } : {}),
+          ...(faults ? { faults: faults as FaultKind[] } : {}),
+          ...(args.maxRuns !== undefined ? { maxRuns: optional(args.maxRuns, "number", "maxRuns") } : {}),
+          ...(args.slowMs !== undefined ? { slowMs: optional(args.slowMs, "number", "slowMs") } : {}),
+          ...(args.config !== undefined ? { config: optional(args.config, "string", "config") } : {}),
+        },
+        progress,
+      );
+    },
+  },
 ];
 
 export function createServer(defaultRoot: string): Server {
@@ -282,13 +335,21 @@ export function createServer(defaultRoot: string): Server {
     tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const tool = TOOLS.find((t) => t.name === request.params.name);
     if (!tool) return failure(`There is no tool called "${request.params.name}".`);
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+    // Long tools say where they are, when the client asked to hear it.
+    const token = request.params._meta?.progressToken;
+    const progress: Progress | undefined =
+      token === undefined
+        ? undefined
+        : (message, done, total) => {
+            void extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: done, total, message } }).catch(() => {});
+          };
     try {
       const project = new Project(optional(args.root, "string", "root") ?? defaultRoot);
-      const answer = await tool.run(project, args, askTester());
+      const answer = await tool.run(project, args, askTester(), progress);
       return {
         content: [{ type: "text", text: renderAnswer(answer) }],
         structuredContent: {
@@ -319,7 +380,7 @@ function failure(message: string) {
 function stringList(value: unknown, name: string): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
-    throw new ProjectError(`${name} must be a list of paths.`);
+    throw new ProjectError(`${name} must be a list of strings.`);
   }
   return value as string[];
 }

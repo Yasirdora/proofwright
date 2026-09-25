@@ -2,8 +2,8 @@
  * The `proofwright` prompt: the guided session in one plain sentence. It asks
  * the AI client to run Playwright's own agents and Proofwright's tools in
  * turn — the planner explores and drafts, the tester approves the test cases,
- * the generator writes only what was approved, and review checks it — with the
- * tester in charge at every step. Clients that support MCP prompts show it as
+ * the generator writes only what was approved, review checks it, and prove
+ * shows whether it can fail — with the tester in charge at every step. Clients that support MCP prompts show it as
  * a slash command (in Claude Code: /mcp__proofwright__proofwright).
  */
 import type { GetPromptResult } from "@modelcontextprotocol/sdk/types.js";
@@ -13,7 +13,7 @@ export const PROMPTS = [
   {
     name: "proofwright",
     description:
-      "Test something from one plain sentence: Playwright's planner drafts, you approve the test cases, Playwright's generator writes only the approved ones, and Proofwright reviews them.",
+      "Test something from one plain sentence: Playwright's planner drafts, you approve the test cases, Playwright's generator writes only the approved ones, and Proofwright reviews them and proves they can fail.",
     arguments: [
       { name: "request", description: "What to test, in your own words, e.g. \"check that coupon codes work at checkout\".", required: true },
     ],
@@ -59,6 +59,8 @@ Run Proofwright's guided session. The tester is in charge: show them each Proofw
 4. Tests — with the playwright-test-generator agent, write one test per case in the approved plan approve_plan names (\`specs/${slug}.approved.md\`). Keep each test's title exactly as the plan has it — it starts with the case number.
 
 5. Review — call Proofwright's review on the files the generator wrote, and show the findings.
+
+6. Prove — tell the tester it takes a few minutes, then call Proofwright's prove with paths set to the files the generator wrote${project?.config.project ? ` and project "${project.config.project}"` : ""}. Show the verdicts: a test that passes when its own action fails needs a stronger check, and the tester decides how.
 
 Never use the playwright-test-healer agent, and never change what a test expects without the tester's yes. If test data is needed, Proofwright's test_data makes it up — made-up values only.`;
   return {

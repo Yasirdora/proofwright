@@ -134,9 +134,15 @@ right error) for each fault that matters to it.
 
 It has to work on **any** Playwright test — the ones Playwright's generator
 writes, yours, your colleagues' — without editing them or your config: the
-faults are applied around the run, never inside the test. How (a wrapper config
-for the runner, a local proxy, or both) is settled with a spike when M3 is
-scoped.
+faults are applied around the run, never inside the test.
+
+*Settled by a spike when M3 was scoped (2026-09-25):* both. For the length of a
+proof, a small config beside yours loads it unchanged and sends the browser's
+traffic through a local proxy Proofwright controls; the proxy breaks one API
+call at a time, HTTPS included (the browser trusts the proxy for the proof
+only, and the proxy checks each site's real certificate). A clean run first
+learns which calls each test makes. How it's measured and decided:
+[DECISIONS.md](DECISIONS.md).
 
 ## 7. The demo app
 

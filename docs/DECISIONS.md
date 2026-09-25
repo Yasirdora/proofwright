@@ -214,3 +214,80 @@ first attempt only — and says so. `demo/answer-key/FAILURES.md` holds the
 answers; an integration test requires `report` to match them, on a copy of the
 demo and a port of its own. The suite is a Playwright project of its own, out of
 `npm test`.
+
+## 2026-09-25 · How `prove` reaches any Playwright project: a wrapper config and a proxy
+
+Measured in a spike on Playwright 1.61.1 before M3 was scoped. Playwright's
+`browser_route` belongs to its MCP browser, not to a test run, and a config
+can't add routes; so a proof puts a proxy in front of the browser instead.
+
+- **The wrapper.** For the length of a proof, `.proofwright-prove.config.ts`
+  sits beside the tester's config, imports it by its full file name, and adds
+  `use.proxy` (and `launchOptions.proxy`) to it and to every project. It must sit
+  in the same folder: Playwright resolves a config's relative paths (testDir,
+  outputDir, webServer's cwd, globalSetup) against the folder of the config it
+  loaded. A `.ts` wrapper loads TypeScript, CommonJS `.js` and ESM `.mjs`
+  configs alike. It's deleted when the proof ends; one left by a killed proof
+  is replaced by the next, which says so. A config with a proxy of its own is
+  refused before any test runs.
+- **Loopback goes through.** Playwright makes Chromium send even 127.0.0.1
+  through a proxy (no `<-loopback>` needed), so local apps are covered.
+  Playwright's request fixture tunnels even plain HTTP with CONNECT, so the
+  proxy reads plain-HTTP tunnels as well.
+- **HTTPS.** A TLS tunnel is opened with a certificate made for its host with
+  `openssl` — RSA, because Chromium rejects the EC certificate macOS's LibreSSL
+  makes with a TLS "decode error". The browser accepts it only because the
+  wrapper sets `ignoreHTTPSErrors` for the proof; the proxy then checks the real
+  site's certificate itself (not when the tester's own config ignores HTTPS
+  errors). Without openssl, HTTPS passes through unbroken and is named.
+- **Claude Code waits.** 2.1.236 gives an MCP tool call about 27 hours, but cuts
+  off a stdio server silent for 30 minutes; `prove` sends progress
+  notifications when the client asks for them.
+
+## 2026-09-25 · What `prove` breaks, and what counts as noticing
+
+- **API calls only**: any call that changes something (not GET, HEAD or
+  OPTIONS), and any GET answered with JSON. Pages, scripts, streams and
+  WebSockets pass through. Answers arrive uncompressed (accept-encoding is
+  dropped) so JSON can be read.
+- **Faults, by default**: every call fails with a server error (500, never
+  reaching the app); a read whose answer holds lists answers with them emptied;
+  and one run with every answer 1 s late. Broken JSON (`malformed`) is extra:
+  it crashes the app for every test at once, so it says little about any one
+  test. One run per call and fault, so a proof needs 1 + calls × faults runs;
+  above `maxRuns` (40) it stops after the clean run and asks.
+- **The clean run** has one worker, no retries and `--forbid-only`: a
+  `test.only` would quietly shrink the proof, so it stops and is named. A call
+  belongs to the last test that started before it.
+- **Fault runs** take only the files whose tests make the call (whole files, so
+  serial groups stay whole), the tester's own worker count, traces on, and a
+  test timeout of 3× the slowest clean test (at least 10 s, never above the
+  tests' own): a fault answers at once, so a test that hasn't noticed by then is
+  stuck on a broken page. Playwright's output goes to a folder of the proof's
+  own; test-results/ isn't touched.
+- **Noticing** is failing on every try while the call is broken; a pass on any
+  try means the test can pass with the app broken there. Failing and then
+  passing with nothing changed is flaky, and a flaky test isn't proven.
+- **Verdicts**: *passes when its own action fails* (it passed while a POST, PUT,
+  PATCH or DELETE it made failed with a server error — the colleague's sign-up,
+  add-to-cart and coupon tests), *can't fail*, *catches*, or *not proven* with
+  the reason. A read it passes through isn't held against it: many pages don't
+  need every answer. Failing when a call it doesn't make is broken is noted: it
+  depends on another test.
+- The answer key was wrong, and is corrected from the measurement: "checkout"
+  can fail (its order-number line catches a failed order); "user can sign up"
+  was missing.
+
+## 2026-09-25 · Two fixes found while building `prove`
+
+- **`report` said a narrowed run was all clear.** A `test.only` makes
+  Playwright run only that test and say nothing of the rest: on the colleague
+  project, `report` said "1 test: 1 passed … Nothing failed" for a selection of
+  8. It now lists the selection with `--forbid-only` first and, when a `.only`
+  narrowed the run, says so in the headline and names the line.
+- **A project reached through a symlink didn't know its own files.** Playwright
+  names files by their real paths (on macOS, /var is /private/var), so a
+  project opened through a symlink got `../../private/…` paths: absolute links
+  in `report`, and fault runs that matched no file. The project's folder is now
+  its real path.
+

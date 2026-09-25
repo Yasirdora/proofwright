@@ -68,7 +68,8 @@ export function report(project: Project, input: ReportInput = {}): Answer<Report
       ? `No tests ran${run.errors.length > 0 ? `: ${run.errors[0]}` : "."}`
       : `${count(run.tests.length, "test")}: ${tally("passed")} passed, ${tally("failed")} failed, ${tally("flaky")} flaky` +
         (tally("skipped") > 0 ? `, ${tally("skipped")} skipped` : "") +
-        (prev ? ` — ${count(changes.newFailures.length, "new failure")}, ${changes.fixed.length} fixed since the last run.` : ".");
+        (prev ? ` — ${count(changes.newFailures.length, "new failure")}, ${changes.fixed.length} fixed since the last run.` : ".") +
+        (run.focused ? " Only the tests marked test.only ran." : "");
 
   const found = renderReport(run, prev, changes, diagnoses);
   const reportFile = project.stateFile("reports", `${run.id}.md`);
@@ -79,10 +80,12 @@ export function report(project: Project, input: ReportInput = {}): Answer<Report
     headline,
     did,
     found,
-    need:
-      diagnoses.length > 0
-        ? [`Say which failure to explain in depth — e.g. "explain ${diagnoses[0].title}" — or "explain all".`]
-        : [],
+    need: [
+      ...(run.focused
+        ? [`Remove the \`.only\` at ${run.focused.map((f) => `\`${f}\``).join(", ")} and ask for a run again — or tell me you meant to run only ${run.focused.length === 1 ? "that test" : "those tests"}.`]
+        : []),
+      ...(diagnoses.length > 0 ? [`Say which failure to explain in depth — e.g. "explain ${diagnoses[0].title}" — or "explain all".`] : []),
+    ],
     next: diagnoses.length === 0 ? "Nothing failed." : undefined,
     data: { run, ...(prev ? { previous: prev.id } : {}), diagnoses, reportFile: project.relative(reportFile) },
   };
@@ -262,6 +265,12 @@ function renderReport(
   diagnoses: ReportData["diagnoses"],
 ): string {
   const out: string[] = [];
+  if (run.focused) {
+    out.push(
+      `**Only part of the selection ran.** Playwright ran only the tests marked \`test.only\` (${run.focused.map((f) => `[${f}](${f})`).join(", ")}); the other tests in the selection didn't run, so this report can't say whether they pass.`,
+      "",
+    );
+  }
   if (run.errors.length > 0) out.push("**Playwright reported for the whole run:**", ...run.errors.map((e) => `- ${e}`), "");
   if (prev) {
     const list = (ts: RunTest[]) => (ts.length > 0 ? ts.map((t) => `"${t.title}"`).join(", ") : "none");
