@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { Project, ProjectError } from "../src/project.js";
-import { faultTimeoutFor } from "../src/prove/prove.js";
+import { faultTimeoutFor, isApiCall } from "../src/prove/prove.js";
+import { explain } from "../src/runs/tools.js";
 import { type ProveData, proveTool } from "../src/prove/tool.js";
 import { findConfig, WRAPPER_NAME, writeWrapper } from "../src/prove/wrapper.js";
 import { demoCopy, freePort, REPO } from "./fixtures.js";
@@ -258,6 +259,65 @@ test(`prove: a step repeated — the answers to the 2nd "Apply" late and differe
     assert.equal(waits.verdict, "not proven");
     assert.match(waits.result, /^Can't be checked: it already fails with nothing broken/);
     assert.equal(waits.todo, "Find out why with explain. If the app is wrong, report the bug — don't change the test to make it pass. Prove it again once it passes.");
+    // …and explain can read that failure right away: prove kept the run with nothing broken.
+    const kept = answer.did.find((d) => d.startsWith("Kept the run with nothing broken as run "));
+    assert.ok(kept, answer.did.join(" | "));
+    const why = explain(project, { test: "checked after its answer" });
+    assert.equal(why.data.diagnosis.kind, "app bug");
+    assert.ok(kept.includes(why.data.run), `${kept} / ${why.data.run}`);
+  } finally {
+    delete process.env.SHOP_PORT;
+  }
+});
+
+test("prove: the web app's manifest isn't a server call — every browser fetches it, whatever the test does", () => {
+  const call = (c: Partial<{ action: boolean; json: boolean; path: string }>) => ({ action: false, json: true, path: "/api/cart", ...c });
+  assert.equal(isApiCall(call({})), true);
+  assert.equal(isApiCall(call({ path: "/manifest.webmanifest" })), false);
+  assert.equal(isApiCall(call({ path: "/app/manifest.json?v=2" })), false);
+  assert.equal(isApiCall(call({ action: true, json: false, path: "/manifest.json" })), true, "a call that changes something always counts");
+  assert.equal(isApiCall(call({ json: false, path: "/styles.css" })), false);
+});
+
+/** Two tests on a page that never talks to a server: one passes, one looks for what isn't there. */
+const NO_SERVER = `import { expect, test } from "@playwright/test";
+
+test("the page greets", async ({ page }) => {
+  await page.setContent("<h1>Hello</h1>");
+  await expect(page.getByRole("heading", { name: "Hello" })).toBeVisible();
+});
+
+test("the page says goodbye", async ({ page }) => {
+  await page.setContent("<h1>Hello</h1>");
+  await expect(page.getByRole("heading", { name: "Goodbye" })).toBeVisible({ timeout: 1000 });
+});
+`;
+
+test("prove: an app that makes no server calls — said plainly, no test blamed; a failure is kept for explain", async () => {
+  const project = demoCopy(["demo/colleague"]);
+  fs.writeFileSync(path.join(project.root, "demo/colleague/no-server.spec.ts"), NO_SERVER);
+  process.env.SHOP_PORT = await freePort();
+  try {
+    const a = await proveTool(project, { paths: ["demo/colleague/no-server.spec.ts"], project: "colleague" });
+    assert.equal(a.headline, "Prove can't check these tests: the app made no server calls.");
+    assert.ok(
+      a.found.startsWith(
+        "Prove checks a test by breaking the app's calls to its server and seeing whether the test notices. While your 2 tests ran, the app made no such calls — it works in the browser, or the tests never reached its server — so there was nothing to break. This says nothing against the tests; prove can't check an app like this yet.",
+      ),
+      a.found,
+    );
+    const [greets, goodbye] = ["greets", "goodbye"].map((w) => a.data.tests.find((t) => t.title.includes(w))!);
+    assert.deepEqual([greets.verdict, greets.result], ["not proven", "Not checked: the app made no server calls, so there was nothing to break."]);
+    assert.match(goodbye.result, /^Can't be checked: it already fails with nothing broken/);
+    // Only the failing test needs a row; nothing is marked ❌.
+    assert.doesNotMatch(a.found, /\| \[the page greets\]/);
+    assert.match(a.found, /\| \[the page says goodbye\]/);
+    assert.doesNotMatch(a.found, /❌/);
+    assert.match(a.did[0], /, and stopped there: there was nothing to break\.$/);
+    // Explain reads the failure at once — and a missing element is the app's or the test's: the screenshot tells.
+    const why = explain(project, { test: "goodbye" });
+    assert.equal(why.data.diagnosis.kind, "app or test");
+    assert.match(why.headline, /^App or test \(possible\): nothing like getByRole\('heading', \{ name: 'Goodbye' \}\) is on the page\.$/);
   } finally {
     delete process.env.SHOP_PORT;
   }

@@ -4,7 +4,7 @@
  *
  *   proofwright mcp [--root DIR]                     start the MCP server on stdio
  *   proofwright guide [--root DIR]                   where you are, and the next step
- *   proofwright init [--yes] [--copilot] [--root DIR] set a Playwright project up
+ *   proofwright init [--yes] [--copilot] [--antigravity] [--root DIR] set a Playwright project up
  *   proofwright review [PATH ...] [--root DIR] [--json]
  *   proofwright report [--run] [--project P] [--grep G] [--from FILE] [--root DIR]
  *   proofwright explain TEST [--run-id ID] [--root DIR]
@@ -26,11 +26,13 @@ const USAGE = `Proofwright ${VERSION} — works with a human tester on Playwrigh
 Usage:
   proofwright mcp [--root DIR]                       Start the MCP server (stdio)
   proofwright guide [--root DIR]                     Where each test session is, and the next step
-  proofwright init [--yes] [--copilot] [--root DIR]  Set a Playwright project up: Playwright's
+  proofwright init [--yes] [--copilot] [--antigravity] [--root DIR]
+                                                     Set a Playwright project up: Playwright's
                                                      agents, Proofwright's MCP server, its config,
                                                      the /proofwright command (--copilot: for
-                                                     GitHub Copilot CLI too). Shows the changes;
-                                                     makes them only with --yes
+                                                     GitHub Copilot CLI too; --antigravity: for
+                                                     Antigravity). Shows the changes; makes them
+                                                     only with --yes
   proofwright review [PATH ...] [--root DIR] [--json]
                                                      Review test scripts against the rules
   proofwright report [--run] [--project P] [--grep G] [--from FILE] [--root DIR]
@@ -86,7 +88,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "init": {
-      const answer = init(new Project(root), flag("--yes"), { copilot: flag("--copilot") });
+      const answer = init(new Project(root), flag("--yes"), { copilot: flag("--copilot"), antigravity: flag("--antigravity") });
       process.stdout.write(renderAnswer(answer));
       return 0;
     }

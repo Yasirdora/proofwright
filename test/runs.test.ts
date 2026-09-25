@@ -124,15 +124,16 @@ const PAGE = `- main [ref=e1]:
   - button "Apply" [ref=e4] [cursor=pointer]
   - button "Remove Blue mug" [ref=e5]`;
 
-test("classify: a locator that finds nothing — a similar element is a test bug; none at all, an app bug", () => {
+test("classify: a locator that finds nothing — a similar element is a test bug; none at all, app or test (the screenshot tells)", () => {
   const miss = (loc: string) => failed(`TimeoutError: locator.click: Timeout 2000ms exceeded.\nCall log:\n  - waiting for ${loc}\n`);
   assert.equal(classify(miss("getByRole('button', { name: 'Apply coupon' })"), { snapshot: PAGE }).kind, "test bug");
   const none = classify(miss("getByRole('button', { name: 'Checkout' })"), { snapshot: PAGE });
-  assert.equal(none.kind, "app bug");
+  assert.equal(none.kind, "app or test");
   assert.equal(none.confidence, "possible");
+  assert.match(none.proposal, /If the page should show it, say so and I'll draft the bug report; if the test expects the wrong thing/);
   assert.match(none.reasoning.join(" "), /The page at that moment showed "Your cart"/);
   // A textbox sharing a word isn't "similar" to a button.
-  assert.equal(classify(miss("getByRole('button', { name: 'Coupon wizard' })"), { snapshot: PAGE }).kind, "app bug");
+  assert.equal(classify(miss("getByRole('button', { name: 'Coupon wizard' })"), { snapshot: PAGE }).kind, "app or test");
   // Exactly the element, yet unusable: hidden, covered or disabled — unclear.
   assert.equal(classify(miss("getByRole('button', { name: 'Apply' })"), { snapshot: PAGE }).kind, "unclear");
   // No snapshot: say so, don't guess.

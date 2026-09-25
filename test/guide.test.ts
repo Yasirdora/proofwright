@@ -12,12 +12,12 @@ import { guide } from "../src/guide/guide.js";
 import { renderPlan } from "../src/plan/playwright-plan.js";
 import { approvePlan } from "../src/plan/tool.js";
 import { Project } from "../src/project.js";
-import { COUPONS } from "./fixtures.js";
+import { COUPONS, HAND_WRITTEN_PLAN, playwrightFolder } from "./fixtures.js";
 
 const TODAY = new Date("2026-09-25T10:00:00Z");
 
 function project(): Project {
-  return new Project(fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-guide-")));
+  return new Project(playwrightFolder("proofwright-guide-"));
 }
 const write = (p: Project, rel: string, text: string) => {
   fs.mkdirSync(path.dirname(path.join(p.root, rel)), { recursive: true });
@@ -40,8 +40,9 @@ function proof(
   tests: Array<{ file: string; verdict: string; result?: string }>,
   startedAt = new Date().toISOString(),
   files?: Record<string, string>,
+  extra: Record<string, unknown> = {},
 ) {
-  write(p, `proofwright/runs/proofs/${id}/proof.json`, JSON.stringify({ id, startedAt, ...(files ? { files } : {}), tests: tests.map((t) => ({ title: t.file, line: 1, result: "", ...t })) }));
+  write(p, `proofwright/runs/proofs/${id}/proof.json`, JSON.stringify({ id, startedAt, ...(files ? { files } : {}), ...extra, tests: tests.map((t) => ({ title: t.file, line: 1, result: "", ...t })) }));
 }
 const sha256 = (p: Project, rel: string) => createHash("sha256").update(fs.readFileSync(path.join(p.root, rel))).digest("hex");
 
@@ -67,6 +68,8 @@ test("guide: follows a session step by step, from what's saved — plan, cases, 
   // TC-003 can't be approved (it checks nothing): approving the rest leaves it open.
   await approvePlan(p, { plan: "specs/coupons.plan.md", approve: ["TC-001", "TC-002"], words: "yes" }, undefined, TODAY);
   assert.match(guide(p).found, /⚠️ Approval: 2 approved, 1 to decide/);
+  // What's left can't be approved: the guide doesn't ask for an approval that would go nowhere.
+  assert.match(guide(p).need[0], /^TC-003 can't be approved as the plan stands \(it has no expected result anywhere, so it could never fail[^)]*\)\. Change the plan, or leave it out\.$/);
 
   // With TC-003 dropped from the plan, every case is decided.
   const two = structuredClone(COUPONS);
@@ -102,7 +105,7 @@ test("guide: follows a session step by step, from what's saved — plan, cases, 
     { file: files[0], verdict: "catches" },
     { file: files[1], verdict: "not proven", result: "Can't be checked: it already fails with nothing broken (…)." },
   ]);
-  assert.equal(guide(p).need[0], '1 test fails with nothing broken — most likely bugs in the app: say "explain the failing tests" to get the reasons and bug reports.');
+  assert.equal(guide(p).need[0], '1 test fails with nothing broken: say "explain the failing tests" to find out whether the app or the test is wrong.');
 
   // A test changed after its proof: prove again.
   const later = new Date(Date.now() + 60_000);
@@ -161,4 +164,40 @@ test("guide: a file rewritten with the same text is still proven; an edit, or a 
   // A newer proof of only the first file: the second isn't proven as it is.
   proof(p, "2026-09-25T12-00-00-000", [{ file: files[0], verdict: "catches" }], new Date().toISOString(), { [files[0]]: sha256(p, files[0]) });
   assert.equal(guide(p).need[0], 'The tests changed since they were proven: say "prove the tests" again.');
+});
+
+test("guide: a plan written by hand, not by Playwright's planner — nothing to build on: start again", () => {
+  const p = project();
+  write(p, "specs/checkout.plan.md", HAND_WRITTEN_PLAN);
+  const a = guide(p);
+  assert.equal(steps(p), "Plan:attention Test cases:to do Approval:to do Tests:to do Review:to do Prove:to do");
+  assert.match(a.found, /⚠️ Plan: not saved by Playwright's planner/);
+  assert.equal(
+    a.need[0],
+    "This plan wasn't saved by Playwright's planner, so it has no steps to turn into test cases. Start again with `/proofwright <what to test>`, and let the planner make the plan.",
+  );
+});
+
+test("guide: a proof of an app that makes no server calls — no verdict on the tests, and no \"0 good\"", async () => {
+  const p = project();
+  const two = structuredClone(COUPONS);
+  two.suites[0].tests.pop();
+  write(p, "specs/coupons.plan.md", renderPlan(two));
+  await approvePlan(p, { plan: "specs/coupons.plan.md" }, undefined, TODAY);
+  await approvePlan(p, { plan: "specs/coupons.plan.md", approve: ["TC-001", "TC-002"], words: "yes" }, undefined, TODAY);
+  const files = two.suites[0].tests.map((t) => t.file);
+  write(p, files[0], CLEAN_TEST("TC-001 · A valid coupon lowers the total"));
+  write(p, files[1], CLEAN_TEST("TC-002 · An expired coupon is refused"));
+  const prints = Object.fromEntries(files.map((f) => [f, sha256(p, f)]));
+  const unchecked = { file: files[0], verdict: "not proven", result: "Not checked: the app made no server calls, so there was nothing to break." };
+  proof(p, "2026-09-25T11-00-00-000", [unchecked, { file: files[1], verdict: "not proven", result: "Can't be checked: it already fails with nothing broken (…)." }], undefined, prints, { clean: { calls: 0 } });
+  let a = guide(p);
+  assert.match(a.found, /⚠️ Prove: can't check this app: it makes no server calls, 1 fail on the app/);
+  assert.doesNotMatch(a.found, /0 good/);
+  assert.equal(a.need[0], '1 test fails with nothing broken: say "explain the failing tests" to find out whether the app or the test is wrong.');
+  // Both pass: nothing more prove can do here.
+  proof(p, "2026-09-25T12-00-00-000", [unchecked, { ...unchecked, file: files[1] }], undefined, prints, { clean: { calls: 0 } });
+  a = guide(p);
+  assert.match(a.found, /⚠️ Prove: can't check this app: it makes no server calls$/m);
+  assert.equal(a.need[0], "Done. Test something else: `/proofwright <what to test>`.");
 });

@@ -11,7 +11,7 @@
  */
 import type { RunTest } from "./runs.js";
 
-export type Kind = "app bug" | "test bug" | "flaky" | "environment" | "unclear";
+export type Kind = "app bug" | "test bug" | "app or test" | "flaky" | "environment" | "unclear";
 export type Confidence = "certain" | "likely" | "possible";
 
 export interface Diagnosis {
@@ -160,7 +160,13 @@ export function classify(test: RunTest, ctx: ClassifyContext = {}): Diagnosis {
   };
 }
 
-/** A locator that found nothing: is there a similar element (test bug), or none at all (app bug)? */
+/**
+ * A locator that found nothing: is there a similar element (a test bug), or
+ * none at all — then the app didn't show it, or the test expects the wrong
+ * thing or took a wrong turn, and only the requirement and the screenshot can
+ * tell which. Measured: both such failures in a trial were the tests' own
+ * mistakes (a panel the test never opened, a dialog the app doesn't show).
+ */
 function notFound(locator: string, ctx: ClassifyContext, first: string, values: object): Diagnosis {
   const want = parseLocator(locator);
   const snapshot = ctx.snapshot ?? "";
@@ -213,15 +219,15 @@ function notFound(locator: string, ctx: ClassifyContext, first: string, values: 
     };
   }
   return {
-    kind: "app bug",
+    kind: "app or test",
     confidence: "possible",
     summary: `nothing like ${locator} is on the page`,
     reasoning: [
       `Nothing on the page matched ${locator}, and nothing similar was there either.`,
       headings.length > 0 ? `The page at that moment showed ${headings.join(", ")}.` : "The snapshot shows what the page held instead.",
-      "Either the app didn't show what it should (an app bug), or the test got to a different page than it expected — the screenshot tells which.",
+      "Either the app didn't show what it should (an app bug), or the test expects something the app doesn't promise, or got to a different page than it expected (a test bug) — the requirement and the screenshot tell which.",
     ],
-    proposal: "Look at the screenshot. If the element should be there, report it as a bug; if the test took a wrong turn earlier, fix that step.",
+    proposal: "Look at the screenshot. If the page should show it, say so and I'll draft the bug report; if the test expects the wrong thing or took a wrong turn, I'll propose the change to the test.",
     ...values,
   };
 }

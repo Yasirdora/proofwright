@@ -16,3 +16,6 @@ proofwright/runs/
 # OS / editor
 .DS_Store
 *.log
+
+# Antigravity's MCP settings: paths on this computer
+.agents/mcp_config.json

@@ -138,6 +138,8 @@ export interface JudgeOptions {
   step?: (testId: string, endpoint: string, nth: number) => StepRef | undefined;
   /** The tester limited the proof to some endpoints. */
   limited?: boolean;
+  /** The app made no server calls at all: there was nothing to break. */
+  noCalls?: boolean;
 }
 
 const ORDINAL = ["", "", "2nd ", "3rd ", "4th ", "5th "];
@@ -226,6 +228,8 @@ export function judge(clean: CleanResult[], runs: FaultRun[], options: JudgeOpti
         `Can't be checked: it passes and fails at random, with nothing changed (${flakyRuns === 1 ? "once" : `${flakyRuns} times`}).`,
         "Make it stable first (explain shows where to look), then prove it again.",
       );
+    } else if (t.calls.length === 0 && options.noCalls) {
+      notProven("Not checked: the app made no server calls, so there was nothing to break.");
     } else if (t.calls.length === 0) {
       notProven(
         `Can't be checked alone: it makes no API calls of its own.${proven.alsoFailed.length > 0 ? ` It fails when ${sentence(t.id, proven.alsoFailed, 1)}: it reads another test's result.` : ""}`,

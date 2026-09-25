@@ -50,7 +50,9 @@ export async function proveTool(project: Project, input: ProveInput, progress?: 
 
   const headline = proof.stopped
     ? `Stopped before breaking anything: checking ${count(proof.clean.tests, "test")} needs ${proof.stopped.needed} runs, more than the limit of ${proof.stopped.maxRuns}.`
-    : `${count(proof.tests.length, "test")} checked: ${tally(proof.tests)}.`;
+    : noCalls(proof)
+      ? `Prove can't check ${proof.tests.length === 1 ? "this test" : "these tests"}: the app made no server calls.`
+      : `${count(proof.tests.length, "test")} checked: ${tally(proof.tests)}.`;
   const did = whatIDid(proof, reportFile);
   const found = proof.stopped ? callsFound(proof) : shortTable(proof, sorted, reportFile);
   const need = whatToDo(proof);
@@ -125,12 +127,17 @@ function slowNote(proof: Proof, t: ProvenTest): string | undefined {
   return `Fails when every answer comes ${seconds(proof.slowMs)} late${t.slow.errorAt ? ` (at ${path.basename(t.slow.errorAt)})` : ""}: look there for a fixed wait or a short timeout.`;
 }
 
+/** The app made no server calls while the tests ran: prove had nothing to break. */
+const noCalls = (proof: Proof) => proof.clean.calls === 0 && proof.tests.length > 0;
+const NO_CALLS_RESULT = /^Not checked: the app made no server calls/;
+const NO_CALLS_NOTE = (tests: number) =>
+  `Prove checks a test by breaking the app's calls to its server and seeing whether the test notices. While your ${count(tests, "test")} ran, the app made no such calls — it works in the browser, or the tests never reached its server — so there was nothing to break. This says nothing against the tests; prove can't check an app like this yet.`;
+
 function shortTable(proof: Proof, sorted: ProvenTest[], reportFile: string): string {
   const out: string[] = [];
-  if (proof.clean.calls === 0) {
-    out.push("**The browser made no API calls I could see**, so nothing could be broken. Do these tests use a browser (measured with Chromium)?", "");
-  }
-  const attention = sorted.filter((t) => t.verdict !== "catches" || slowNote(proof, t));
+  if (noCalls(proof)) out.push(NO_CALLS_NOTE(proof.clean.tests), "");
+  // With no calls, a test that simply wasn't checked needs no row: the note says it for all of them.
+  const attention = sorted.filter((t) => (t.verdict !== "catches" || slowNote(proof, t)) && !NO_CALLS_RESULT.test(t.result));
   if (attention.length > 0) {
     out.push("| Test | Result | What to do |", "|---|---|---|");
     for (const t of attention) {
@@ -187,8 +194,11 @@ function whatIDid(proof: Proof, reportFile: string): string[] {
     `Ran ${proof.selection.length > 0 ? `\`npx playwright test ${proof.selection.join(" ")}\`` : "your tests"} once with nothing broken (${count(proof.clean.tests, "test")}, ${seconds(proof.clean.durationMs)})${
       proof.stopped
         ? ", then stopped."
+        : proof.runs.length === 0
+          ? ", and stopped there: there was nothing to break."
         : `, then ${count(proof.runs.length, "more time")} with something broken: one call at a time (${perCall})${repeats > 0 ? `, a repeated step (${repeats})` : ""}${proof.runs.some((r) => r.kind === "slow") ? ", every answer late (1)" : ""} — ${seconds(proof.runs.reduce((n, r) => n + r.durationMs, 0))}.`
     }`,
+    ...(proof.cleanRun ? [`Kept the run with nothing broken as run ${proof.cleanRun}, so explain can read its failures.`] : []),
     `Your tests and config weren't changed. Full details: \`${reportFile}\`.`,
   ];
 }
@@ -196,7 +206,7 @@ function whatIDid(proof: Proof, reportFile: string): string[] {
 // ---------------------------------------------------------------- the page for developers
 
 function fullReport(proof: Proof, sorted: ProvenTest[], headline: string): string {
-  const out: string[] = [`# Proof — ${proof.id}`, "", `**${headline}**`, ""];
+  const out: string[] = [`# Proof — ${proof.id}`, "", `**${headline}**`, "", ...(noCalls(proof) ? [NO_CALLS_NOTE(proof.clean.tests), ""] : [])];
   if (proof.stopped) {
     out.push(callsFound(proof), "");
     return `${out.join("\n")}\n`;

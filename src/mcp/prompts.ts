@@ -8,6 +8,7 @@
  */
 import type { GetPromptResult } from "@modelcontextprotocol/sdk/types.js";
 import { type Project, ProjectError } from "../project.js";
+import { notReady } from "../setup.js";
 
 export const PROMPTS = [
   {
@@ -60,6 +61,10 @@ export function renderPrompt(name: string, args: Record<string, string>, project
  * only the first word of the request (Claude Code's prompt commands).
  */
 export function sessionText(request: string, project?: Project, options: { cut?: boolean } = {}): string {
+  const problem = project ? notReady(project) : undefined;
+  if (problem) {
+    return `Stop: this session can't start. Tell the tester exactly this, and do nothing else — don't install anything, don't write a plan by hand, and don't copy plans or tests from another project:\n\n${problem}`;
+  }
   const cut = options.cut === true;
   const slug = cut ? "<name>" : slugFor(request);
   const plan = `specs/${slug}.plan.md`;
@@ -86,6 +91,8 @@ Rules for every step — tell Playwright's agents too:
 - When the page does something the requirements don't mention, write that expected result starting with "Not promised:". Proofwright then asks the tester whether the app should do it.
 - Every step must be something a user can do on the page — no direct API calls — unless the tester asks for API tests.
 - If this app can't hand work to Playwright's agents, do their work yourself with the playwright-test tools, following the agent's instructions (in .claude/agents/ or .github/agents/).
+- Stay in this project: Playwright's test server writes plans and tests here, and Proofwright checks them here. If the tester wants another project tested, tell them to set Proofwright up there and open this app in that folder — never copy plans or tests between projects.
+- Never change the project's setup to get past a problem: don't install packages or browsers, and don't add or edit package.json, a Playwright config or MCP settings. Stop, tell the tester what's missing, and let them decide.
 
 1. Plan — with the playwright-test-planner agent. Explore the app for this request, then save the plan with planner_save_plan as \`${plan}\`. Cover the normal path, limits, empty and unusual values, and errors. Assume a fresh state for every test. Give every step an expected result the page can show.${where ? ` ${where}` : ""}
 

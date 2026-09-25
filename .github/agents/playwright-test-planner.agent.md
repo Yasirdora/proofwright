@@ -24,7 +24,6 @@ tools:
   - playwright-test/browser_wait_for
   - playwright-test/planner_setup_page
   - playwright-test/planner_save_plan
-model: Claude Sonnet 4.6
 mcp-servers:
   playwright-test:
     type: stdio

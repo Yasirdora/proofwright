@@ -7,12 +7,12 @@ import { renderAnswer } from "../src/answer.js";
 import { renderPlan, type TestPlan } from "../src/plan/playwright-plan.js";
 import { approvePlan } from "../src/plan/tool.js";
 import { Project, ProjectError } from "../src/project.js";
-import { COUPONS, REPO } from "./fixtures.js";
+import { COUPONS, HAND_WRITTEN_PLAN, playwrightFolder, REPO } from "./fixtures.js";
 
 const TODAY = new Date("2026-09-24T10:00:00Z");
 
 function project(plan: TestPlan = COUPONS, config?: unknown): Project {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-approve-"));
+  const dir = playwrightFolder("proofwright-approve-");
   fs.mkdirSync(path.join(dir, "specs"));
   fs.writeFileSync(path.join(dir, "specs/coupons.plan.md"), renderPlan(plan));
   if (config) {
@@ -112,7 +112,7 @@ test("approve_plan: an expected result the requirements don't promise is a quest
 });
 
 test("approve_plan: the plan Playwright's planner really wrote (the owner's walkthrough) raises no false questions", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-walkthrough-"));
+  const dir = playwrightFolder("proofwright-walkthrough-");
   fs.mkdirSync(path.join(dir, "specs"));
   fs.copyFileSync(path.join(REPO, "test/fixtures/walkthrough-coupons.plan.md"), path.join(dir, "specs/plan.plan.md"));
   const a = await approvePlan(new Project(dir), { plan: "specs/plan.plan.md" }, undefined, TODAY);
@@ -151,4 +151,18 @@ test("approve_plan: a missing, foreign or off-limits plan is refused plainly", a
   await assert.rejects(() => approvePlan(p, { plan: "specs/secret.plan.md" }), /off limits/);
   await assert.rejects(() => approvePlan(p, { plan: "../outside.plan.md" }), /outside the project/);
   await assert.rejects(() => approvePlan(p, { plan: "specs/coupons.plan.md", approve: ["TC-099"], words: "yes" }), /no test case TC-099/);
+});
+
+test("approve_plan: a plan Playwright's planner didn't save is refused once, plainly — nothing is written", async () => {
+  const dir = playwrightFolder("proofwright-handplan-");
+  fs.mkdirSync(path.join(dir, "specs"));
+  fs.writeFileSync(path.join(dir, "specs/checkout.plan.md"), HAND_WRITTEN_PLAN);
+  await assert.rejects(
+    () => approvePlan(new Project(dir), { plan: "specs/checkout.plan.md" }, undefined, TODAY),
+    (e: unknown) =>
+      e instanceof ProjectError &&
+      e.message ===
+        "specs/checkout.plan.md isn't a plan Playwright's planner saved: none of its 2 tests has numbered steps or a test file, so there's nothing to approve. Ask Playwright's planner to make the plan (it saves it in the right format); don't write or reformat it by hand.",
+  );
+  assert.ok(!fs.existsSync(path.join(dir, "proofwright")), "no test cases were written");
 });

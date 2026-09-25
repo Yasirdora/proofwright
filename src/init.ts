@@ -15,7 +15,17 @@
  * (.github/skills/proofwright/), and Playwright's test server in .mcp.json,
  * which Copilot CLI reads too (measured with 1.0.88). Playwright's Copilot
  * setup also writes a workflow for Copilot's cloud agent; the CLI doesn't need
- * it, so init removes it unless it was already there.
+ * it, so init removes it unless it was already there. Playwright's Copilot
+ * agents name a model ("Claude Sonnet 4.6"); where the tester's Copilot doesn't
+ * offer it, the agent doesn't start (measured with 1.0.88), so init removes
+ * that line and the agents use the session's model.
+ *
+ * With --antigravity, it writes `.agents/mcp_config.json` for Antigravity.
+ * Antigravity starts MCP servers outside the project (measured: in `/`), so
+ * `npx playwright` there finds another Playwright than the project's and the
+ * planner fails ("did not expect test() to be called here"). The file names
+ * the project's own Playwright, its config and the project by full path —
+ * paths on this computer, so the file goes in .gitignore.
  *
  * It shows what it would change and changes nothing without --yes. Playwright's
  * init-agents replaces .mcp.json outright, dropping the project's other MCP
@@ -23,10 +33,12 @@
  */
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Answer, count } from "./answer.js";
 import { type Project, ProjectError } from "./project.js";
+import { findConfig } from "./prove/wrapper.js";
 
 interface McpConfig {
   mcpServers?: Record<string, unknown>;
@@ -66,8 +78,28 @@ Use the \`guide\` tool of the proofwright MCP server.
 `;
 
 const PLAYWRIGHT_SERVER = { command: "npx", args: ["playwright", "run-test-mcp-server"] };
+const COPILOT_AGENTS = [".github/agents/playwright-test-planner.agent.md", ".github/agents/playwright-test-generator.agent.md", ".github/agents/playwright-test-healer.agent.md"];
+const MODEL_LINE = /^model: .*\n/m;
+const ANTIGRAVITY_FILE = ".agents/mcp_config.json";
 
-export function init(project: Project, apply: boolean, options: { copilot?: boolean } = {}): Answer<InitData> {
+/** Antigravity's MCP settings: full paths, because it starts servers outside the project. */
+export function antigravityServers(project: Project): Record<string, unknown> {
+  let playwrightCli: string;
+  try {
+    // Found through its package.json: Playwright's exports don't include cli.js itself.
+    const pkgFile = createRequire(path.join(project.root, "package.json")).resolve("playwright/package.json");
+    const bin = (JSON.parse(fs.readFileSync(pkgFile, "utf8")) as { bin?: Record<string, string> }).bin?.playwright ?? "cli.js";
+    playwrightCli = path.join(path.dirname(pkgFile), bin);
+  } catch {
+    throw new ProjectError("Playwright isn't installed in this project yet: run `npm install` here first, then init again.");
+  }
+  return {
+    proofwright: { command: process.execPath, args: [CLI, "mcp", "--root", project.root] },
+    "playwright-test": { command: process.execPath, args: [playwrightCli, "run-test-mcp-server", "--config", findConfig(project)] },
+  };
+}
+
+export function init(project: Project, apply: boolean, options: { copilot?: boolean; antigravity?: boolean } = {}): Answer<InitData> {
   const pkgFile = path.join(project.root, "package.json");
   if (!fs.existsSync(pkgFile)) throw new ProjectError("There's no package.json here — run init in the root of a Playwright project.");
   const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8")) as Record<string, Record<string, string> | undefined>;
@@ -90,6 +122,13 @@ export function init(project: Project, apply: boolean, options: { copilot?: bool
   const skillFile = path.join(project.root, ".github/skills/proofwright/SKILL.md");
   const hasSkill = fs.existsSync(skillFile);
   const hasPlaywrightServer = Boolean(before.mcpServers?.["playwright-test"]);
+  const pinnedModel = () => COPILOT_AGENTS.map((f) => path.join(project.root, f)).filter((f) => fs.existsSync(f) && MODEL_LINE.test(fs.readFileSync(f, "utf8")));
+  const antigravity = options.antigravity === true;
+  const antigravityFile = path.join(project.root, ANTIGRAVITY_FILE);
+  const antigravityBefore = readMcp(antigravityFile);
+  const antigravityWanted = antigravity ? antigravityServers(project) : {};
+  const antigravityCurrent = Object.entries(antigravityWanted).every(([n, v]) => JSON.stringify(antigravityBefore.mcpServers?.[n]) === JSON.stringify(v));
+  const ignoresAntigravity = fs.existsSync(gitignore) && /^\/?\.agents\/mcp_config\.json$/m.test(fs.readFileSync(gitignore, "utf8"));
 
   const planned = [
     ...(hasAgents ? [] : ["Install Playwright's test agents: `npx playwright init-agents --loop=claude` (the planner, the generator, their MCP server, a seed test, specs/)."]),
@@ -100,6 +139,13 @@ export function init(project: Project, apply: boolean, options: { copilot?: bool
     ...(copilot && !hasCopilotAgents ? ["For GitHub Copilot CLI: install Playwright's agents for Copilot (`npx playwright init-agents --loop=copilot`: `.github/agents/`, `.vscode/mcp.json`)."] : []),
     ...(copilot && !hasSkill ? ["For GitHub Copilot CLI: add a Proofwright skill (`.github/skills/proofwright/SKILL.md`)."] : []),
     ...(copilot && !hasPlaywrightServer && hasAgents ? ["For GitHub Copilot CLI: add Playwright's test server to `.mcp.json`."] : []),
+    ...(copilot && (!hasCopilotAgents || pinnedModel().length > 0)
+      ? ["For GitHub Copilot CLI: remove the fixed model from Playwright's Copilot agents, so they use your session's model (a model your Copilot doesn't offer stops them)."]
+      : []),
+    ...(antigravity && !antigravityCurrent
+      ? ["For Antigravity: write `.agents/mcp_config.json` with Proofwright's and Playwright's servers by full path — Antigravity starts them outside the project, where `npx playwright` finds another Playwright."]
+      : []),
+    ...(antigravity && !ignoresAntigravity ? ["Add `.agents/mcp_config.json` to `.gitignore`: its paths are this computer's."] : []),
   ];
   const otherServers = Object.keys(before.mcpServers ?? {}).filter((n) => n !== "proofwright" && n !== "playwright-test");
 
@@ -178,6 +224,9 @@ export function init(project: Project, apply: boolean, options: { copilot?: bool
         done.push("Removed the workflow Playwright's Copilot setup adds for Copilot's cloud agent (`.github/workflows/copilot-setup-steps.yml`): Copilot CLI doesn't need it.");
       }
     }
+    const pinned = pinnedModel();
+    for (const f of pinned) fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace(MODEL_LINE, ""));
+    if (pinned.length > 0) done.push("Removed the fixed model from Playwright's Copilot agents: they use your session's model.");
     if (!hasSkill) {
       fs.mkdirSync(path.dirname(skillFile), { recursive: true });
       fs.writeFileSync(skillFile, COPILOT_SKILL);
@@ -190,6 +239,20 @@ export function init(project: Project, apply: boolean, options: { copilot?: bool
     }
   }
 
+  if (antigravity) {
+    if (!antigravityCurrent) {
+      fs.mkdirSync(path.dirname(antigravityFile), { recursive: true });
+      const merged = { ...antigravityBefore, mcpServers: { ...(antigravityBefore.mcpServers ?? {}), ...antigravityWanted } };
+      fs.writeFileSync(antigravityFile, `${JSON.stringify(merged, null, 2)}\n`);
+      done.push("Wrote `.agents/mcp_config.json` for Antigravity: Proofwright's and Playwright's servers, by full path.");
+    }
+    if (!ignoresAntigravity) {
+      const text = fs.existsSync(gitignore) ? fs.readFileSync(gitignore, "utf8") : "";
+      fs.writeFileSync(gitignore, `${text}${text && !text.endsWith("\n") ? "\n" : ""}\n# Antigravity's MCP settings: paths on this computer\n.agents/mcp_config.json\n`);
+      done.push("Added `.agents/mcp_config.json` to `.gitignore`.");
+    }
+  }
+
   return {
     headline: "This project is set up for Proofwright.",
     did: done,
@@ -199,7 +262,11 @@ export function init(project: Project, apply: boolean, options: { copilot?: bool
       `Playwright also installed its **healer** agent. Proofwright never uses it — it changes what tests expect in order to pass them. You can delete \`.claude/agents/playwright-test-healer.md\`${copilot ? " and `.github/agents/playwright-test-healer.agent.md`" : ""} if you don't want it offered.`,
     ].join("\n"),
     need: [],
-    next: `restart Claude Code in this project, then try: \`/proofwright check that … works\`${copilot ? " — in Copilot CLI, ask it to use Proofwright to check that … works (trust the folder when it asks)" : ""}.`,
+    next: [
+      "restart Claude Code in this project, then try: `/proofwright check that … works`",
+      ...(copilot ? ["in Copilot CLI, start it in this folder, trust the folder, and type the same `/proofwright check that … works`"] : []),
+      ...(antigravity ? ["in Antigravity, reload the window, then ask it to use Proofwright to check that … works"] : []),
+    ].join(" — ") + ".",
     data: { planned, done, restoredServers },
   };
 }
@@ -209,6 +276,7 @@ function readMcp(file: string): McpConfig {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8")) as McpConfig;
   } catch {
-    throw new ProjectError(".mcp.json isn't valid JSON — fix it first, so no MCP server in it is lost.");
+    const name = file.endsWith(ANTIGRAVITY_FILE) ? ANTIGRAVITY_FILE : ".mcp.json";
+    throw new ProjectError(`${name} isn't valid JSON — fix it first, so no MCP server in it is lost.`);
   }
 }

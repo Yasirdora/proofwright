@@ -469,3 +469,56 @@ MCP app, but that's untested.
   `proofwright/runs/proofs/<id>/` folder before the clean run, so a proof
   stopped by a busy port or a `test.only` left it empty. The folder is now
   made when there's something to keep.
+
+## 2026-09-25 · What the trials in Copilot CLI and Antigravity showed
+
+The owner tried Proofwright in GitHub Copilot CLI (twice) and in Antigravity,
+on a web app that had no Playwright. What went wrong, measured from the apps'
+own logs, and what changed:
+
+- **Nothing checked the project first.** Copilot started a session on a
+  project without Playwright; it wrote a plan by hand, installed
+  `@playwright/test` and a browser, added a Playwright config, and copied
+  plans and tests from this repository. Antigravity started Proofwright in
+  `/`. Now `guide`, the session steps, `approve_plan`, `prove` and `report`
+  check first — a project folder, a package.json, `@playwright/test` (and,
+  before running, installed) — and say what's missing: "Nothing was
+  changed." The session steps add two rules: stay in this project (never
+  copy plans or tests between projects), and never change the project's
+  setup to get past a problem.
+- **A plan written by hand was read as empty cases.** Seven cases, each "no
+  expected result, no test file", and the guide still said "say which cases
+  you approve"; the tester said "all" and nothing happened. A plan in which
+  no test has a step or a file isn't one Playwright's planner saved:
+  `approve_plan` says so once and writes nothing, and the guide says to
+  start again. And when every case left is one that can't be approved, the
+  guide says to change the plan or leave them out, instead of asking.
+- **prove on an app with no server** blamed the tests. The app worked in the
+  browser; its one "call" was the web app manifest, which every browser
+  fetches whatever the test does, so four good-looking tests were "❌ need a
+  better check". The manifest isn't a call now, and when the app makes none,
+  prove says it can't check these tests — "This says nothing against the
+  tests" — and the guide shows that instead of "0 good". Checking such apps
+  (breaking what the browser saves, for example) is a proposal of its own.
+- **explain couldn't read a proof.** It reads recorded runs; the tester had
+  to run the tests again. When a test fails in prove's run with nothing
+  broken, prove now keeps that run, so explain works right away.
+- **A missing element was an "app bug".** Both such failures in the trial
+  were the tests' own (a panel the test never opened, a dialog the app
+  doesn't show). With nothing similar on the page, explain now says "app or
+  test", and the tester decides from the screenshot. The guide says the same
+  about tests that fail with nothing broken.
+- **Copilot's Playwright agents name a model** ("Claude Sonnet 4.6"); where
+  the tester's Copilot doesn't offer it, the agent doesn't start. `init
+  --copilot` takes the line out, and the demo's agents lost it too.
+  `/proofwright` does work in Copilot CLI, as the skill's command — but only
+  when Copilot is started in the project's folder (measured: typing `/proofw`
+  there offers it; in the home folder it's "Unknown command").
+- **Antigravity** starts MCP servers in `/`, from the workspace's
+  `.agents/mcp_config.json`. There, `npx playwright run-test-mcp-server`
+  found a cached Playwright 1.63 while the project had 1.61.1, and the
+  planner failed: "Playwright Test did not expect test() to be called here"
+  (reproduced). The project's own Playwright by full path, with `--config`,
+  works from `/` (reproduced). `init --antigravity` writes that file, with
+  `--root` for Proofwright, and puts it in `.gitignore`: its paths are this
+  computer's.

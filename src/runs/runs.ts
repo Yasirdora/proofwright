@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { type Project, ProjectError } from "../project.js";
+import { notReady } from "../setup.js";
 
 export type TestStatus = "passed" | "failed" | "flaky" | "skipped";
 
@@ -76,6 +77,8 @@ export function selectionArgs(opts: Pick<RunOptions, "paths" | "project" | "grep
 
 /** Run Playwright's runner with its JSON reporter and record the run. */
 export function runPlaywright(project: Project, opts: RunOptions = {}): Run {
+  const problem = notReady(project, { toRun: true });
+  if (problem) throw new ProjectError(problem);
   for (const p of opts.paths ?? []) project.resolve(p);
   const focused = focusedTests(project, opts);
   const args = ["--no-install", "playwright", "test", ...selectionArgs(opts), "--reporter=json", "--trace=retain-on-failure"];
@@ -228,6 +231,11 @@ export function reportedTests(project: Project, report: PlaywrightReport): Repor
 }
 
 export const STATUS: Record<string, TestStatus> = { expected: "passed", unexpected: "failed", flaky: "flaky", skipped: "skipped" };
+
+/** Keep a run Playwright made elsewhere (prove's clean run) as a recorded run, so report and explain can read it. */
+export function keepRun(project: Project, report: PlaywrightReport, ran: string[]): Run {
+  return record(project, report, { ran });
+}
 
 function record(project: Project, report: PlaywrightReport, source: Run["source"], focused: string[] = []): Run {
   const startedAt = report.stats?.startTime ?? new Date().toISOString();

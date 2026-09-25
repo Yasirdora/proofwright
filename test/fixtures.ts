@@ -9,6 +9,42 @@ import { Project } from "../src/project.js";
 export const REPO = fileURLToPath(new URL("../../", import.meta.url));
 
 /**
+ * A plan an AI wrote by hand, in a format of its own (measured in a trial):
+ * headings and bullets, but no numbered steps and no test files — nothing
+ * Playwright's planner would have saved.
+ */
+export const HAND_WRITTEN_PLAN = `# Coupon checkout — test plan
+
+## Test Scenarios
+
+### 1. Coupons at checkout
+
+#### 1.1. A valid coupon lowers the total
+
+##### 1.1.1. Apply the coupon
+- **Action:** Enter the coupon code and choose **Apply**.
+- **Data:** \`SAVE10\`.
+- **Expected result:** The total is 10% lower.
+
+#### 1.2. An expired coupon is refused
+
+##### 1.2.1. Apply the coupon
+- **Action:** Enter an expired code and choose **Apply**.
+- **Data:** \`SPRING24\`.
+- **Expected result:** The shop says the coupon has expired.
+`;
+
+/**
+ * An empty folder that is a Playwright project as far as Proofwright's setup
+ * check can tell: a package.json that lists @playwright/test.
+ */
+export function playwrightFolder(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  fs.writeFileSync(path.join(dir, "package.json"), `${JSON.stringify({ name: "a-shop", devDependencies: { "@playwright/test": "1.61.1" } }, null, 2)}\n`);
+  return dir;
+}
+
+/**
  * A throwaway copy of the demo — the shop, its Playwright config and the given
  * test folders — to run Playwright's runner in. Give it a port of its own
  * (SHOP_PORT) so it never meets another run's shop.

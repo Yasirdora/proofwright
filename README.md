@@ -24,6 +24,7 @@ file and line.
 | M2 | `report` and `explain` — on Playwright's runner and its evidence | done |
 | M3 | `prove` — on any Playwright test | done |
 | Guided | `/proofwright` and `guide` step by step; the Claude desktop app; GitHub Copilot CLI | done |
+| Trials | A setup check before anything starts; plainer answers where the trials went wrong; Antigravity's setup | done |
 
 Not published anywhere; local only.
 
@@ -59,8 +60,15 @@ tests · review · prove** — and every answer ends with the next step and what
 say. After a break, or in a new session, type `/proofwright` on its own: it
 shows where you are and what comes next.
 
-In GitHub Copilot CLI, ask in your own words: *"use Proofwright to check that
-coupon codes work at checkout"*, or *"Proofwright: where am I?"*.
+In GitHub Copilot CLI, start `copilot` in your project's folder, trust the
+folder, and type the same `/proofwright check that coupon codes work at
+checkout` — or ask in your own words. Started anywhere else, Copilot doesn't
+know `/proofwright`. In Antigravity, ask: *"use Proofwright to check that
+coupon codes work at checkout"*.
+
+Proofwright tests the project the AI app is open in, and only a project with
+Playwright set up: it checks first and says what's missing, and changes
+nothing to get past it.
 
 ## Set up your own Playwright project
 
@@ -71,6 +79,7 @@ npm install && npm run build          # in this repository, once
 node /path/to/proofwright/dist/src/cli.js init              # in your project: shows what it would change
 node /path/to/proofwright/dist/src/cli.js init --yes        # …and does it (Claude Code)
 node /path/to/proofwright/dist/src/cli.js init --copilot --yes   # …and for GitHub Copilot CLI too
+node /path/to/proofwright/dist/src/cli.js init --antigravity --yes   # …and for Antigravity too
 ```
 
 `init` installs Playwright's agents (`npx playwright init-agents`), adds
@@ -79,7 +88,14 @@ Proofwright's MCP server next to Playwright's in `.mcp.json`, adds the
 `init-agents` replaces `.mcp.json` outright; `init` puts your other MCP servers
 back. With `--copilot` it also installs Playwright's agents for Copilot
 (`.github/agents/`) and a Proofwright skill (`.github/skills/proofwright/`);
-Copilot CLI reads the same `.mcp.json` — trust the folder when it asks.
+Copilot CLI reads the same `.mcp.json` — trust the folder when it asks. It
+also takes out the model Playwright's Copilot agents name, so they use your
+session's model (one your Copilot doesn't offer stops them). With
+`--antigravity` it writes `.agents/mcp_config.json`: Antigravity starts MCP
+servers outside the project (in `/`), where `npx playwright` finds another
+Playwright than yours, so the file names your project's Playwright, its config
+and the project by full path. Those paths are this computer's, so the file
+goes in `.gitignore`.
 
 ## What works where
 
@@ -89,9 +105,10 @@ Copilot CLI reads the same `.mcp.json` — trust the folder when it asks.
 | **Apps** | Websites (anything you open in a browser) | Mobile and desktop apps |
 | **Claude Code, terminal** | Everything, including the Accept / Decline approval form | — |
 | **Claude desktop app** (Code tab) | Everything; you approve in the chat, in your own words | The approval form (the app declines forms without showing them) |
-| **GitHub Copilot CLI** | Proofwright's tools, the skill, Playwright's agents, long runs (tested: 150 s) | A full walkthrough there is untested |
-| **Other AI apps** (Antigravity, …) | Proofwright's tools work with any MCP app and any model | Untested; Playwright's agents aren't set up for them |
-| **prove** | What the page asks its server for (JSON APIs, forms), HTTP and HTTPS, Chromium | Calls between servers; WebSockets; Firefox and WebKit; Windows |
+| **GitHub Copilot CLI** | `/proofwright` (start Copilot in the project's folder), the skill, Playwright's agents, long runs (tested: 150 s) | A full walkthrough in a set-up project is untested |
+| **Antigravity** | Proofwright's tools and Playwright's test server, set up by `init --antigravity` (measured: they start from `/`) | Untested end to end; Playwright has no agents for it, so the AI does their work |
+| **Other AI apps** | Proofwright's tools work with any MCP app and any model | Untested |
+| **prove** | What the page asks its server for (JSON APIs, forms), HTTP and HTTPS, Chromium | Apps that work in the browser with no server (prove says so); calls between servers; WebSockets; Firefox and WebKit; Windows |
 
 ## Try the whole flow on the demo shop
 

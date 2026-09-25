@@ -140,6 +140,7 @@ export function explain(project: Project, input: ExplainInput): Answer<ExplainDa
   const need: Record<Diagnosis["kind"], string> = {
     "app bug": "File the bug (the draft is above), or tell me the requirement changed — then the test case changes first.",
     "test bug": "Tell me whether the proposed fix is right; I'll change the test only on your yes.",
+    "app or test": "Look at the screenshot and tell me: should the page show it? If yes, I'll draft the bug report; if not, I'll propose the change to the test.",
     flaky: "Tell me whether to look for the timing problem in the test or in the app.",
     environment: "Check that the service is up and reachable, then ask for a report with a run again.",
     unclear: "Look at the screenshot or trace and tell me what you see.",
@@ -305,6 +306,7 @@ function renderReport(
 const TODO: Record<Diagnosis["kind"], string> = {
   "app bug": "report it as a bug in the app (explain drafts the report). Don't change the test to make it pass.",
   "test bug": "fix the test (explain shows the change it needs).",
+  "app or test": "look at the screenshot: if the page should show it, it's an app bug to report; if not, the test needs fixing.",
   flaky: "find why it passes only sometimes (explain shows where to look).",
   environment: "check that the app or service is running and reachable, then run again.",
   unclear: "look at the screenshot and tell me what you see.",
@@ -319,5 +321,6 @@ function cap(s: string): string {
 }
 
 function article(kind: string): string {
+  if (kind === "app or test") return "an app bug or a test bug";
   return kind === "unclear" ? "unclear" : /^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`;
 }

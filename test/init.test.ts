@@ -65,6 +65,47 @@ test("init --copilot: Playwright's agents for Copilot, a Proofwright skill, the 
   // Playwright's seed test goes into the project Proofwright's config names, not the first one.
   assert.ok(fs.existsSync(path.join(dir, "e2e/seed.spec.ts")));
   assert.ok(!fs.existsSync(path.join(dir, "unit/seed.spec.ts")));
+  // Playwright names a model its Copilot agents must use; a Copilot without it can't start them. The line goes.
+  for (const agent of ["planner", "generator", "healer"]) {
+    const file = path.join(dir, `.github/agents/playwright-test-${agent}.agent.md`);
+    if (fs.existsSync(file)) assert.doesNotMatch(fs.readFileSync(file, "utf8"), /^model:/m, agent);
+  }
+  assert.ok(a.did.includes("Removed the fixed model from Playwright's Copilot agents: they use your session's model."));
+  assert.match(a.next ?? "", /in Copilot CLI, start it in this folder, trust the folder, and type the same `\/proofwright check that … works`/);
+  assert.equal(init(new Project(dir), true, { copilot: true }).headline, "This project is already set up.");
+  // Agents a project already had, still with the model line: init takes it out.
+  const planner = path.join(dir, ".github/agents/playwright-test-planner.agent.md");
+  fs.writeFileSync(planner, fs.readFileSync(planner, "utf8").replace(/^name: .*$/m, (l) => `${l}\nmodel: Claude Sonnet 4.6`));
+  const plan = init(new Project(dir), false, { copilot: true });
+  assert.ok(plan.data.planned.some((p) => p.startsWith("For GitHub Copilot CLI: remove the fixed model")), plan.data.planned.join(" | "));
+  init(new Project(dir), true, { copilot: true });
+  assert.doesNotMatch(fs.readFileSync(planner, "utf8"), /^model:/m);
+});
+
+test("init --antigravity: Antigravity's settings name the project's own Playwright, its config and the project by full path", () => {
+  const dir = playwrightProject({ mcpServers: {} });
+  fs.mkdirSync(path.join(dir, ".agents"));
+  fs.writeFileSync(path.join(dir, ".agents/mcp_config.json"), JSON.stringify({ mcpServers: { other: { command: "other-server" } } }));
+  const project = new Project(dir);
+  const a = init(project, true, { antigravity: true });
+  const servers = JSON.parse(fs.readFileSync(path.join(dir, ".agents/mcp_config.json"), "utf8")).mcpServers;
+  assert.deepEqual(servers.other, { command: "other-server" }, "the file's other servers are kept");
+  assert.equal(servers.proofwright.command, process.execPath);
+  assert.deepEqual(servers.proofwright.args.slice(1), ["mcp", "--root", project.root], "started in /, it still knows the project");
+  assert.equal(servers["playwright-test"].command, process.execPath);
+  const [cli, ...rest] = servers["playwright-test"].args;
+  assert.equal(fs.realpathSync(cli), fs.realpathSync(path.join(REPO, "node_modules/playwright/cli.js")), "the project's own Playwright — not whatever npx finds in /");
+  assert.deepEqual(rest, ["run-test-mcp-server", "--config", path.join(project.root, "playwright.config.ts")]);
+  // Paths on this computer: never committed.
+  assert.match(fs.readFileSync(path.join(dir, ".gitignore"), "utf8"), /^\.agents\/mcp_config\.json$/m);
+  assert.ok(a.did.includes("Wrote `.agents/mcp_config.json` for Antigravity: Proofwright's and Playwright's servers, by full path."));
+  assert.match(a.next ?? "", /in Antigravity, reload the window, then ask it to use Proofwright to check that … works/);
+  assert.equal(init(project, true, { antigravity: true }).headline, "This project is already set up.");
+
+  // Without Playwright installed, there's nothing to point at: say so.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-init-"));
+  fs.writeFileSync(path.join(bare, "package.json"), JSON.stringify({ devDependencies: { "@playwright/test": "1.61.1" } }));
+  assert.throws(() => init(new Project(bare), false, { antigravity: true }), /Playwright isn't installed in this project yet: run `npm install` here first/);
 });
 
 test("init: .mcp.json is written only when a server changes — never just reformatted", () => {

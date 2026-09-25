@@ -11,8 +11,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type Answer, count } from "../answer.js";
 import { type Project, ProjectError } from "../project.js";
+import { notReady } from "../setup.js";
 import { approvedPlan, type Approval, buildCases, type CaseLedger, renderCases, type TestCase } from "./cases.js";
-import { parsePlan, PlanFormatError, renderPlan } from "./playwright-plan.js";
+import { parsePlan, PlanFormatError, renderPlan, unreadablePlan } from "./playwright-plan.js";
 
 export interface ApprovePlanInput {
   /** The plan Playwright's planner saved, e.g. specs/coupons.plan.md. */
@@ -45,6 +46,8 @@ export async function approvePlan(
   ask?: AskTester,
   today = new Date(),
 ): Promise<Answer<ApprovePlanData>> {
+  const problem = notReady(project);
+  if (problem) throw new ProjectError(problem);
   const planAbs = project.resolve(input.plan);
   const planRel = project.relative(planAbs);
   if (project.isIgnored(planRel)) throw new ProjectError(`${planRel} is off limits (proofwright/config.json).`);
@@ -55,6 +58,12 @@ export async function approvePlan(
   } catch (err) {
     if (err instanceof PlanFormatError) throw new ProjectError(`${planRel}: ${err.message}`);
     throw err;
+  }
+  if (unreadablePlan(plan)) {
+    const n = plan.suites.reduce((k, s) => k + s.tests.length, 0);
+    throw new ProjectError(
+      `${planRel} isn't a plan Playwright's planner saved: none of its ${count(n, "test")} has numbered steps or a test file, so there's nothing to approve. Ask Playwright's planner to make the plan (it saves it in the right format); don't write or reformat it by hand.`,
+    );
   }
 
   const slug = path.basename(planRel).replace(/\.plan\.md$|\.md$/i, "").toLowerCase().replace(/[^a-z0-9-]+/g, "-");

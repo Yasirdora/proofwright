@@ -13,7 +13,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "../src/mcp/server.js";
 import { renderPlan } from "../src/plan/playwright-plan.js";
-import { COUPONS } from "./fixtures.js";
+import { COUPONS, playwrightFolder } from "./fixtures.js";
 
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const CLI = fileURLToPath(new URL("../src/cli.js", import.meta.url));
@@ -113,7 +113,7 @@ test("mcp: bad input is an error with a plain reason, never a crash", async () =
 });
 
 function planProject(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-mcp-plan-"));
+  const dir = playwrightFolder("proofwright-mcp-plan-");
   fs.mkdirSync(path.join(dir, "specs"));
   fs.writeFileSync(path.join(dir, "specs/coupons.plan.md"), renderPlan(COUPONS));
   return dir;
@@ -226,6 +226,10 @@ test("mcp: the proofwright prompt turns one sentence into the guided session", a
       "first check the app's address is free: Playwright's generator often leaves the app running",
       "do their work yourself with the playwright-test tools",
       "Proofwright's guide tool says where the tester is and what comes next",
+      // from the trials in Copilot CLI and Antigravity
+      "Stay in this project: Playwright's test server writes plans and tests here",
+      "never copy plans or tests between projects",
+      "Never change the project's setup to get past a problem: don't install packages or browsers",
       // this repository's proofwright/config.json
       'project "generated" and seed file "demo/generated/seed.spec.ts"',
       "under `demo/generated/`",

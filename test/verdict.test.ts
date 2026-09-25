@@ -135,6 +135,18 @@ test("verdict: not proven — and a test failing with nothing broken is never so
   assert.match(verdictOf(clean("x", [[COUPON, true]]), [run("error", COUPON, { x: ["skipped"] })]).result, /a test before it in its group failed first/);
 });
 
+test("verdict: with no server calls anywhere, a test is simply not checked — never blamed, never \"alone\"", () => {
+  const [passes, fails] = judge(
+    [clean("passes", []), clean("fails", [], { status: "failed", attempts: ["failed"], error: "Timeout" })],
+    [],
+    { name, noCalls: true },
+  );
+  assert.deepEqual([passes.verdict, passes.result, passes.todo], ["not proven", "Not checked: the app made no server calls, so there was nothing to break.", ""]);
+  assert.match(fails.result, /^Can't be checked: it already fails with nothing broken/);
+  // Without noCalls, a test with no calls in an app that has them reads another test's result.
+  assert.match(judge([clean("x", [])], [], { name })[0].result, /^Can't be checked alone/);
+});
+
 test("verdict: failing on a call it doesn't make is noted — it depends on another test", () => {
   const [t] = judge(
     [clean("checkout", [[COUPON, true]])],

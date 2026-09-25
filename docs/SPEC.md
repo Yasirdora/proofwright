@@ -62,7 +62,7 @@ expects without your yes, and never calls something "done" without proof.
 
 | Tool | What it does | State |
 |---|---|---|
-| `guide` | Where the tester is in each test session, and the one next step — read from what's saved, so it works after a break. With a request, the steps of a new guided session. | done |
+| `guide` | Where the tester is in each test session, and the one next step — read from what's saved, so it works after a break. With a request, the steps of a new guided session. First it checks the project is ready (a project folder, with Playwright), and says what's missing. | done |
 | `review` | Checks test scripts — Playwright's generator's, yours or a colleague's — against the rules in section 5. Same answer every time. | done (M1a) |
 | `test_data` | Seeded, made-up data for the cases' fields: valid, limits, invalid, other scripts, long, empty — each marked accept or refuse from your rules, or asked. | done (M1a) |
 | `approve_plan` | Turns the planner's draft into test cases (section 4), shows what's open, and records your approval, in your words. The only way a case becomes approved. | M1b |
@@ -194,7 +194,10 @@ works; a real project of yours is the true test later.
   agents for exploring, generating and running, eslint-plugin-playwright and the
   TypeScript compiler for the review rules. Few dependencies.
 - **In a tester's project:** Playwright's agents once (`npx playwright
-  init-agents --loop=claude`), and Proofwright's MCP server.
+  init-agents --loop=claude`), and Proofwright's MCP server — `proofwright
+  init` sets both up; `--copilot` and `--antigravity` set up those apps too.
+  Proofwright works only in a project with Playwright: it checks before a
+  session starts and before anything runs, and says what's missing.
 - **Milestones:** M0 demo shop and its planted bugs (done) → M1a the server,
   `review`, `test_data` (done) → M1b `approve_plan` and the `/proofwright`
   prompt → M2 `explain`, `report` → M3 `prove`.

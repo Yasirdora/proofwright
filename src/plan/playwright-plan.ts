@@ -48,6 +48,16 @@ export interface TestPlan {
 
 export class PlanFormatError extends Error {}
 
+/**
+ * True when no test in the plan has a step or a test file: the plan wasn't
+ * saved by Playwright's planner (an AI wrote it by hand, in a format of its
+ * own), so there's nothing to turn into test cases.
+ */
+export function unreadablePlan(plan: TestPlan): boolean {
+  const tests = plan.suites.flatMap((s) => s.tests);
+  return tests.length > 0 && tests.every((t) => t.steps.length === 0 && !t.file);
+}
+
 export function parsePlan(markdown: string): TestPlan {
   const lines = markdown.split(/\r?\n/);
   let name = "";

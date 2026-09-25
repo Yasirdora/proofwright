@@ -24,9 +24,10 @@ import * as path from "node:path";
 import { type Answer, count } from "../answer.js";
 import type { Project } from "../project.js";
 import { buildCases, type CaseLedger } from "../plan/cases.js";
-import { parsePlan } from "../plan/playwright-plan.js";
+import { parsePlan, unreadablePlan } from "../plan/playwright-plan.js";
 import { fingerprint } from "../prove/prove.js";
 import { review } from "../review/review.js";
+import { notReady } from "../setup.js";
 
 export type StepState = "done" | "to do" | "attention";
 
@@ -56,6 +57,16 @@ const MARK: Record<StepState, string> = { done: "✅", "to do": "⬜", attention
 const START = "Say what to test: `/proofwright <what to test>` — for example `/proofwright check that coupon codes work at checkout`.";
 
 export function guide(project: Project): Answer<GuideData> {
+  const problem = notReady(project);
+  if (problem) {
+    return {
+      headline: "This project isn't ready for Proofwright yet.",
+      did: ["Checked the project. Nothing was run or changed."],
+      found: problem,
+      need: [],
+      data: { sessions: [] },
+    };
+  }
   const specs = path.join(project.root, "specs");
   const plans = fs.existsSync(specs)
     ? fs.readdirSync(specs).filter((f) => f.endsWith(".plan.md") && !project.isIgnored(`specs/${f}`))
@@ -99,8 +110,20 @@ function sessionOf(project: Project, planRel: string): GuideSession {
   const plan = parsePlan(fs.readFileSync(planAbs, "utf8"));
   const slug = path.basename(planRel).replace(/\.plan\.md$/i, "").toLowerCase().replace(/[^a-z0-9-]+/g, "-");
   const touched = [fs.statSync(planAbs).mtimeMs];
-  const steps: GuideStep[] = [{ name: "Plan", state: "done", note: "" }];
   const also: string[] = [];
+  if (unreadablePlan(plan)) {
+    // Written by hand, not by Playwright's planner: no steps, no test files — nothing to build on.
+    const rest = ["Test cases", "Approval", "Tests", "Review", "Prove"].map((name): GuideStep => ({ name, state: "to do", note: "" }));
+    return {
+      feature: plan.name,
+      plan: planRel,
+      steps: [{ name: "Plan", state: "attention", note: "not saved by Playwright's planner" }, ...rest],
+      next: "This plan wasn't saved by Playwright's planner, so it has no steps to turn into test cases. Start again with `/proofwright <what to test>`, and let the planner make the plan.",
+      also,
+      updatedAt: fs.statSync(planAbs).mtimeMs,
+    };
+  }
+  const steps: GuideStep[] = [{ name: "Plan", state: "done", note: "" }];
   let next = "";
   const todo = (text: string) => (next ||= text);
 
@@ -120,6 +143,12 @@ function sessionOf(project: Project, planRel: string): GuideSession {
     const decided = `${approved} approved${leftOut > 0 ? `, ${leftOut} left out` : ""}`;
     if (open.length > 0 || approved === 0) {
       steps.push({ name: "Approval", state: approved > 0 ? "attention" : "to do", note: `${decided}, ${open.length} to decide` });
+      if (open.length > 0 && open.every((c) => c.blocking.length > 0)) {
+        // Nothing left that could be approved: asking for approval would go nowhere.
+        const reasons = [...new Set(open.flatMap((c) => c.blocking))];
+        const which = open.length === 1 ? `${open[0].id} can't` : `None of the ${open.length} cases left can`;
+        todo(`${which} be approved as the plan stands (${reasons.join("; ")}). Change the plan, or leave ${open.length === 1 ? "it" : "them"} out.`);
+      }
       todo(
         `${questions > 0 ? `Answer the ${questions === 1 ? "question" : `${questions} questions`}, then s` : "S"}ay which cases you approve: all, or by number.`,
       );
@@ -162,14 +191,19 @@ function sessionOf(project: Project, planRel: string): GuideSession {
     const weak = proof.verdicts.filter((v) => v === "misses its own action" || v === "can't fail").length;
     const good = proof.verdicts.filter((v) => v === "catches").length;
     const failing = proof.failing;
-    steps.push({
-      name: "Prove",
-      state: weak + failing > 0 ? "attention" : "done",
-      note: [`${good} good`, ...(weak > 0 ? [`${weak} need a better check`] : []), ...(failing > 0 ? [`${failing} fail on the app`] : [])].join(", "),
-    });
+    steps.push(
+      proof.noCalls
+        ? // Nothing could be broken: no verdict on the tests, so no "0 good".
+          { name: "Prove", state: "attention", note: ["can't check this app: it makes no server calls", ...(failing > 0 ? [`${failing} fail on the app`] : [])].join(", ") }
+        : {
+            name: "Prove",
+            state: weak + failing > 0 ? "attention" : "done",
+            note: [`${good} good`, ...(weak > 0 ? [`${weak} need a better check`] : []), ...(failing > 0 ? [`${failing} fail on the app`] : [])].join(", "),
+          },
+    );
     if (weak > 0) todo(`Make ${weak === 1 ? "the test" : `the ${weak} tests`} prove flagged check what ${weak === 1 ? "its" : "their"} own step did: say "fix the tests prove flagged".`);
     if (failing > 0) {
-      todo(`${count(failing, "test")} ${failing === 1 ? "fails" : "fail"} with nothing broken — most likely bugs in the app: say "explain the failing tests" to get the reasons and bug reports.`);
+      todo(`${count(failing, "test")} ${failing === 1 ? "fails" : "fail"} with nothing broken: say "explain the failing tests" to find out whether the app or the test is wrong.`);
     }
   }
   todo(`Done. Test something else: \`/proofwright <what to test>\`.`);
@@ -182,6 +216,8 @@ interface LatestProof {
   failing: number;
   /** Each proven file's fingerprint; absent in proofs made before fingerprints were kept. */
   files?: Record<string, string>;
+  /** The app made no server calls, so prove had nothing to break. */
+  noCalls?: boolean;
 }
 
 /** The test file changed since the proof — or wasn't in it. */
@@ -198,7 +234,12 @@ function latestProof(project: Project, files: string[]): LatestProof | undefined
   for (const id of fs.readdirSync(dir).sort().reverse()) {
     const file = path.join(dir, id, "proof.json");
     if (!fs.existsSync(file)) continue;
-    let proof: { startedAt?: string; files?: Record<string, string>; tests?: Array<{ file: string; verdict: string; result: string }> };
+    let proof: {
+      startedAt?: string;
+      files?: Record<string, string>;
+      clean?: { calls?: number };
+      tests?: Array<{ file: string; verdict: string; result: string }>;
+    };
     try {
       proof = JSON.parse(fs.readFileSync(file, "utf8"));
     } catch {
@@ -211,6 +252,7 @@ function latestProof(project: Project, files: string[]): LatestProof | undefined
       verdicts: mine.map((t) => t.verdict),
       failing: mine.filter((t) => t.verdict === "not proven" && /already fails with nothing broken/.test(t.result)).length,
       ...(proof.files ? { files: proof.files } : {}),
+      ...(proof.clean?.calls === 0 ? { noCalls: true } : {}),
     };
   }
   return undefined;

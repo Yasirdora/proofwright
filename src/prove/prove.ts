@@ -27,8 +27,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { type Project, ProjectError, STATE_DIR } from "../project.js";
+import { notReady } from "../setup.js";
 import {
   focusErrors,
+  keepRun,
   type PlaywrightReport,
   type PwResult,
   projectPath,
@@ -125,6 +127,8 @@ export interface Proof {
    */
   files: Record<string, string>;
   tests: ProvenTest[];
+  /** The clean run, kept as a recorded run when a test failed in it — so explain can read it. */
+  cleanRun?: string;
   /** Set when the proof stopped before breaking anything. */
   stopped?: { needed: number; maxRuns: number };
   /** Project-relative: proof.json and the evidence. */
@@ -132,6 +136,8 @@ export interface Proof {
 }
 
 export async function prove(project: Project, options: ProveOptions = {}): Promise<Proof> {
+  const problem = notReady(project, { toRun: true });
+  if (problem) throw new ProjectError(problem);
   for (const p of options.paths ?? []) project.resolve(p);
   const faults = options.faults && options.faults.length > 0 ? [...new Set(options.faults)] : DEFAULT_FAULTS;
   const maxRuns = options.maxRuns ?? DEFAULT_MAX_RUNS;
@@ -211,6 +217,11 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
       throw new ProjectError(`No tests ran${why ? `: ${why}` : ""}. Check the files, project or grep you named.`);
     }
 
+    // A test failed with nothing broken: keep the clean run, so explain can read it right away.
+    const cleanRun = reported.some((t) => t.test.status === "unexpected" || t.test.status === "flaky")
+      ? keepRun(project, clean.report, ["npx", "playwright", "test", ...selection]).id
+      : undefined;
+
     const cleanCalls = [...px.calls];
     const byTest = attribute(reported, cleanCalls);
     // Which step made each call, from each test's trace (when it can be read).
@@ -232,7 +243,7 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
       const step = (traced.get(testId) ?? []).filter((c) => c.endpoint === endpoint)[nth - 1]?.step;
       return step ? { name: step.name, at: `${project.relative(step.file)}:${step.line}` } : undefined;
     };
-    const api = cleanCalls.filter((c) => c.action || c.json);
+    const api = cleanCalls.filter(isApiCall);
     const mainHost = mostCommon(api.map((c) => c.host));
     const name = (endpoint: string) => {
       const [method, rest] = [endpoint.slice(0, endpoint.indexOf(" ")), endpoint.slice(endpoint.indexOf(" ") + 1)];
@@ -244,7 +255,7 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
     for (const t of reported) {
       const mine = new Map<string, TestCall>();
       for (const c of byTest.get(t.id) ?? []) {
-        if (!(c.action || c.json)) continue;
+        if (!isApiCall(c)) continue;
         mine.set(c.endpoint, { endpoint: c.endpoint, action: c.action });
         const e = endpointMap.get(c.endpoint) ?? { endpoint: c.endpoint, name: name(c.endpoint), action: c.action, lists: false, tests: [] };
         e.lists ||= c.lists;
@@ -307,6 +318,7 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
       longestTestMs,
       https: { opened: [], passedThrough: [], untrusted: [] },
       files: fingerprints(project, reported.map((t) => t.file)),
+      ...(cleanRun ? { cleanRun } : {}),
       tests: [],
       dir: project.relative(dir),
     };
@@ -415,7 +427,7 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
       }
     }
 
-    proof.tests = judge(cleanResults, faultRuns, { name, step: stepOf, limited: filters.length > 0 });
+    proof.tests = judge(cleanResults, faultRuns, { name, step: stepOf, limited: filters.length > 0, noCalls: api.length === 0 });
     proof.https = {
       opened: [...new Set(px.calls.filter((c) => c.https).map((c) => c.host))].sort(),
       passedThrough: [...px.passedThrough].sort(),
@@ -433,6 +445,18 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
 }
 
 // ---------------------------------------------------------------- helpers
+
+/**
+ * A call to the app's server that prove can break: one that changes something,
+ * or a JSON answer — but not the web app's manifest, a file every browser
+ * fetches whatever the test does (measured: it was a browser-only app's one
+ * "call", and every test was then blamed for not noticing it break).
+ */
+export function isApiCall(c: Pick<Call, "action" | "json" | "path">): boolean {
+  if (!(c.action || c.json)) return false;
+  const file = c.path.split("?")[0];
+  return c.action || !/(\.webmanifest|\/manifest\.json)$/i.test(file);
+}
 
 /** A file's fingerprint: the sha256 of its text. */
 export function fingerprint(file: string): string {
