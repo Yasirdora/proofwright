@@ -6,8 +6,10 @@ runs; Proofwright checks what they — and people — produce, makes the test da
 proves tests can catch bugs, and never changes what a test expects without the
 tester's yes.
 
-Every answer has the same three parts — **What I did · What I found · What I
-need from you** — and every finding links to its file and line.
+Every answer is short and in plain English, in the same order — **the result,
+what to do, what was done** — with details only where something needs
+explaining, so it can go to a developer as it is. Every finding links to its
+file and line.
 
 - **Spec (approved):** [docs/SPEC.md](docs/SPEC.md)
 - **Decisions made while building:** [docs/DECISIONS.md](docs/DECISIONS.md)
@@ -29,10 +31,10 @@ Not published anywhere; local only.
 | Tool | What it does |
 |---|---|
 | `review` | Checks Playwright test scripts — yours or a colleague's — against 13 rules: fixed waits, tests with no assertion, `expect` without `await`, forced clicks, fragile selectors, `.only`/`.skip` left in, tests that hand data to each other, run-in-order mode, shared accounts, passwords or real personal data in tests, and retries that hide flaky tests. Seven of the rules are checked through [eslint-plugin-playwright](https://github.com/mskelton/eslint-plugin-playwright); the rest are Proofwright's own. Every finding says which one found it. Reads only; runs and changes nothing. |
-| `approve_plan` | Turns the plan Playwright's planner saved into numbered test cases you read — Action · Data · Expected result — lists what's open, and records your approval case by case. Only approved cases go on, in a plan of their own for Playwright's generator. The approval is yours: Proofwright asks you directly where the app can show a form (Claude Code in the terminal), and otherwise needs your own words. |
+| `approve_plan` | Turns the plan Playwright's planner saved into numbered test cases you read — Action · Data · Expected result — asks about what's open (a step that doesn't say what it types, a vague result, a result the requirements don't promise), and records your approval case by case. Only approved cases go on, in a plan of their own for Playwright's generator. The approval is yours: where the app can show a form (Claude Code in the terminal), Proofwright asks you directly — **Accept** approves, **Decline** doesn't, and the form waits 15 minutes; elsewhere it needs your own words. Cases you leave out aren't asked about again. |
 | `report` | The one-page report. Runs Playwright's own runner (your config, plus a JSON report and traces on failure) — or reads a JSON report from CI — keeps the results and every failure's evidence, compares with the run before (new failures, still failing, fixed), and gives each failure a one-line diagnosis with how sure it is. |
 | `explain` | One failure in depth: the failing line, expected and received, the page as it was, the screenshot and trace, the reasoning — **app bug, test bug, flaky or environment** — and what to do, with a bug report drafted for an app bug. It proposes; it never changes a test, and never proposes changing what a test expects to make it pass. |
-| `prove` | Proves tests can fail: runs them with the app broken on purpose and shows which notice. A clean run first learns which API calls each test makes; then each call fails in turn (a server error, or empty lists), and every answer comes late once. A test that still passes when its own action fails — a POST, PUT, PATCH or DELETE it makes — is reported with a screenshot and a trace of the page it passed on. Works on any Playwright test through a temporary config beside yours; your tests and config aren't changed. Takes minutes: one run per call broken. |
+| `prove` | Proves tests can fail: runs them with the app broken on purpose and shows which notice. A clean run first learns which API calls each test's steps make; then each call fails in turn (a server error, or empty lists), every answer comes late once, and — for a step a test repeats — the answers to the repeat come late and different. A test that stays green while its own step fails, or that checks the page before its step's answers arrive, needs a better check: the answer names the step and line (`"Apply" (coupons.spec.ts:30)`) with a screenshot of the page it passed on. Works on any Playwright test through a temporary config beside yours; your tests and config aren't changed. Takes minutes: one run per call broken. |
 | `test_data` | Made-up values for a form's fields — typical, at the limits, invalid, and the unusual ones that break apps (other scripts, right-to-left, emoji, markup, byte limits) — each marked **accept**, **refuse**, or a question for you, worked out only from the rules you give. Same seed, same values. Can save to `proofwright/data/<name>.json`. |
 
 Plus the prompt **`/proofwright`** (in Claude Code: `/mcp__proofwright__proofwright`):
@@ -116,7 +118,10 @@ HTTPS calls pass through unbroken and the answer says so. It's measured on
 Chromium. A config that sets its own proxy isn't supported yet.
 
 `proofwright/config.json` in a project lists paths Proofwright must never read
-(this repo keeps the demo's answer key out that way).
+(this repo keeps the demo's answer key out that way), and can name the files
+that say what the app promises — `"requirements": ["docs/requirements.md"]`
+(this repo: `demo/README.md`). Expected results come from those and from you,
+never from the app's code.
 
 ## Try the demo shop
 

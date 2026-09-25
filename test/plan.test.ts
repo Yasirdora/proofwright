@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { approvedPlan, buildCases, type CaseLedger } from "../src/plan/cases.js";
+import { approvedPlan, buildCases, type CaseLedger, valuesOf } from "../src/plan/cases.js";
 import { parsePlan, PlanFormatError, renderPlan, type TestPlan } from "../src/plan/playwright-plan.js";
 import { COUPONS } from "./fixtures.js";
 
@@ -51,9 +51,25 @@ test("cases: numbered, with the values typed as data, and what's open listed", (
   assert.deepEqual(valid.blocking, []);
   assert.deepEqual(valid.questions, []);
   assert.deepEqual(expired.blocking, []);
-  assert.ok(expired.questions.some((q) => q.includes("doesn't say which")), "typing a value it doesn't name");
+  assert.ok(expired.questions.some((q) => q.includes("doesn't say what")), "typing a value it doesn't name");
   assert.ok(expired.questions.some((q) => q.includes('"It works as expected"')), "an expectation nothing can check");
   assert.deepEqual(clicks.blocking, ["it has no expected result anywhere, so it could never fail"]);
+});
+
+test("cases: values are found as the planner writes them — quoted or not — and a step that only describes one is a question", () => {
+  const cases: Array<[string, string[], boolean]> = [
+    ["In the Coupon code field, type SAVE10 and click Apply.", ["SAVE10"], false],
+    ["Type a made-up code, NOPE, into the Coupon code field and click Apply.", ["NOPE"], false],
+    ["Go to the cart page and change the quantity for Pencil set to 4.", ["4"], false],
+    ["Add Pencil set (€4.50) to the cart.", [], false], // "set" is part of a product's name, not an action
+    ["Type Priya Sharma into the Name field", ["Priya Sharma"], false],
+    ["Select Germany from the Country list", ["Germany"], false],
+    ['Type "  save10  " into the Coupon code field', ["  save10  "], false],
+    ["Type a valid email into the Email field", [], true],
+    ["Type the password into the Password field", [], true],
+    ["Fill in the form and click Save", [], true],
+  ];
+  for (const [action, values, unsaid] of cases) assert.deepEqual(valuesOf(action), { values, unsaid }, action);
 });
 
 test("cases: numbers stay put when the plan changes; a changed case loses its approval", () => {

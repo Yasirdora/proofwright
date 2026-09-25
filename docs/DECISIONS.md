@@ -268,9 +268,10 @@ can't add routes; so a proof puts a proxy in front of the browser instead.
 - **Noticing** is failing on every try while the call is broken; a pass on any
   try means the test can pass with the app broken there. Failing and then
   passing with nothing changed is flaky, and a flaky test isn't proven.
-- **Verdicts**: *passes when its own action fails* (it passed while a POST, PUT,
-  PATCH or DELETE it made failed with a server error — the colleague's sign-up,
-  add-to-cart and coupon tests), *can't fail*, *catches*, or *not proven* with
+- **Verdicts**: *misses its own action* — first named *passes when its own
+  action fails* (it passed while a POST, PUT, PATCH or DELETE it made failed
+  with a server error — the colleague's sign-up, add-to-cart and coupon
+  tests), *can't fail*, *catches*, or *not proven* with
   the reason. A read it passes through isn't held against it: many pages don't
   need every answer. Failing when a call it doesn't make is broken is noted: it
   depends on another test.
@@ -290,4 +291,94 @@ can't add routes; so a proof puts a proxy in front of the browser instead.
   project opened through a symlink got `../../private/…` paths: absolute links
   in `report`, and fault runs that matched no file. The project's folder is now
   its real path.
+
+## 2026-09-25 · What the owner's walkthrough found, and what changed
+
+The owner ran `/proofwright check that coupon codes work at checkout` end to
+end in Claude Code. Every change below comes from that run, measured there or
+reproduced after it.
+
+- **Claude Code passes a prompt only the first word.** It splits what follows
+  the command on spaces and gives each declared argument one word, dropping
+  the rest (2.1.236: `split(/\s+/)`, zipped with the argument names). The
+  session was told "the tester asked: "check"", the plan was named
+  `specs/plan.plan.md`, and the test cases recorded "check" as the request.
+  Declaring extra arguments to catch the words would list them all in Claude
+  Code's menu ("arguments: request, w2, w3 …"), so the prompt instead tells the
+  AI — it sees everything the tester typed — to use their full words, and to
+  name the plan from them. Proofwright knows it's Claude Code from the client's
+  name (`claude-code`).
+- **Expected results never come from the app's code.** The session read the
+  shop's `store.mjs`, where three planted bugs live, and started reasoning
+  from it. A test whose expected result is read from the code confirms the
+  code's bugs. The prompt and the server's instructions now say where expected
+  results come from: the request, and what the app promises — named in
+  `proofwright/config.json` as `requirements` (the demo: `demo/README.md`).
+- **"Not promised" is a question.** Two cases (codes in lower case with spaces;
+  a coupon surviving an emptied cart) expected what the page did, which the
+  README never promised. The planner is told to start such an expected result
+  with "Not promised:", and approve_plan asks the tester about it; approved, the
+  mark is dropped from what the generator gets.
+- **Values without quotes.** All 23 of approve_plan's questions were false:
+  Playwright's planner writes "type SAVE10 into the Coupon code field", and
+  only quoted values were read — and "set" in the product name "Pencil set"
+  counted as typing. Values are now read after a typing verb at the start of a
+  clause ("…, type SAVE10", "and change the quantity to 4", "a made-up code,
+  NOPE,"); a phrase that points back at earlier data ("the email used to sign
+  up") is a value too; "type a valid email" is still a question. The owner's
+  real plan is a test fixture: 21 cases, no questions.
+- **Approval is one step, and the form waits 15 minutes.** Claude Code's log
+  shows every answer the owner gave: `{"action":"accept","content":{"approve":false}}`
+  — Accept, with the box unticked (Enter moves past the box; only Space ticks
+  it). The form now has no box: Accept approves, Decline doesn't. And it waited
+  60 seconds (the SDK's default) — the first form expired while the owner asked
+  how to use it; it now waits 15 minutes and says so plainly when it closes.
+- **Cases left out stay out.** Approving some cases leaves the others out on
+  purpose: they aren't asked about again, until approved.
+- **Short answers.** The owner's team mostly speaks German; the owner asked for
+  answers "clear, focused on what's necessary for testers … easy to share with
+  developers", with details "when necessary". Every answer now leads with the
+  result, then "What to do", then one line on what was done; tables have one
+  row per problem that stands on its own. prove's answer was 79,000 characters
+  (the session had to query it with jq); it's now under 3,000, with the details
+  in the saved report and a small `data` for the client.
+- **Rules for the generator.** It wrote a fixed password into four tests (review
+  flagged them); the prompt now tells it to create secrets when the test runs,
+  to check each approved expected result even when the app disagrees, and to
+  wait for each action to finish before checking it.
+- **A busy port is said plainly.** prove failed because the generator's session
+  left the shop running on 4610. Playwright writes a JSON report even then,
+  with the error inside; report and prove now recognise it and say what to do.
+- **A test that fails on an app bug isn't something to "fix".** prove told the
+  tester to "fix" the two tests failing on real bugs. It now says: find out why
+  with explain; if the app is wrong, report the bug, don't change the test.
+
+## 2026-09-25 · prove checks a repeated step: the answers after it, late and different
+
+The walkthrough found a test prove had called good: "re-applying a coupon
+changes nothing" checked the discount right after the second "Apply", before
+the shop's answer — it read the old, correct value while the shop really
+doubles the discount. Breaking every coupon call can't show this: the first
+"Apply" fails and the test notices. Measured on the real test before choosing:
+
+- Failing only the 2nd "Apply" (500) doesn't work: the discount stays −€1.20,
+  so a good test passes too — it would blame good tests.
+- Making only the 2nd answer late and changed doesn't work either: the shop
+  reloads the cart after "Apply" and shows that, so a good test ("13. a
+  different coupon replaces the applied one", which waits for "WELCOME5
+  applied.") passed and was blamed.
+- What works: from the 2nd "Apply" on, every JSON answer comes late (1 s) with
+  every number changed (+1). The early test still passes (a weakness, reported
+  with the step and line); test 13 fails on −€5.01 (good). A test that waits
+  only for the Apply answer, not the reload, also passes — and is reported: it
+  checks the page before the page's answers arrive.
+
+It runs that test alone (`file:line`), for the 2nd and 3rd time a test repeats
+an action. A fault that broke nothing (no JSON after it) counts as not tried.
+
+**Steps by name.** The clean run keeps traces; each test's trace links every
+request to the step that made it (test.trace's steps and the network log share
+one clock), so findings say `"Apply" (coupons-cart.spec.ts:264)` instead of
+`POST /api/cart/coupon`. A trace is read with a small zip reader (no new
+dependency); when one can't be read, the call is named instead.
 

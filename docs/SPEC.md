@@ -19,7 +19,7 @@ expects without your yes, and never calls something "done" without proof.
 | Problem today | Proofwright |
 |---|---|
 | AI test tools write tests that pass — even when the app is broken | Every test — whoever wrote it — is **proven**: Proofwright breaks the app on purpose and checks the test notices. A test that can't fail is reported, not counted. |
-| "The AI did something" — you can't see what or why | Every answer has the same three parts: **What I did · What I found · What I need from you.** Every finding links to its evidence: screenshot, trace, file and line. |
+| "The AI did something" — you can't see what or why | Every answer is short, in plain English, and in the same order: **the result, what to do, what was done** — with details only where something needs explaining, so it can go to a developer as it is. Every finding links to its evidence: screenshot, trace, file and line. |
 | Vague requests get guessed at | Your request becomes a **test plan in tester language** you read and approve first. What it couldn't work out is asked, not guessed. |
 | Old failures and flaky tests drown the real news | Every run is compared with the last one: **new failure · still failing · fixed · flaky.** |
 | Auto-"healing" hides real regressions — Playwright's own healer is told to fix "assertions and expected values" until the test passes, without asking | It proposes a fix and explains it. It never changes a locator or an expected result without your yes. |
@@ -57,8 +57,8 @@ expects without your yes, and never calls something "done" without proof.
 
 ## 3. The tools (what your AI client can call)
 
-**Proofwright's tools** — named after what you already do. Each returns *What I
-did · What I found · What I need from you*.
+**Proofwright's tools** — named after what you already do. Each answers with
+*the result, what to do, and one line on what it did*.
 
 | Tool | What it does | State |
 |---|---|---|
@@ -141,8 +141,12 @@ proof, a small config beside yours loads it unchanged and sends the browser's
 traffic through a local proxy Proofwright controls; the proxy breaks one API
 call at a time, HTTPS included (the browser trusts the proxy for the proof
 only, and the proxy checks each site's real certificate). A clean run first
-learns which calls each test makes. How it's measured and decided:
-[DECISIONS.md](DECISIONS.md).
+learns which calls each test's steps make. *Added after the owner's walkthrough
+(2026-09-25):* for a step a test repeats (clicking "Apply" twice), a run where
+the answers to the repeat come late and different — which shows a test that
+checks the page before they arrive; and each finding names the step and line
+("the 2nd "Apply", line 264"), read from Playwright's trace. How it's measured
+and decided: [DECISIONS.md](DECISIONS.md).
 
 ## 7. The demo app
 

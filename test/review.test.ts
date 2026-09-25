@@ -70,7 +70,7 @@ test("review: the shop's own tests are clean", () => {
   const answer = review(new Project(REPO), ["demo/tests"]);
   assert.equal(answer.data.files.length, 1);
   assert.deepEqual(answer.data.findings, []);
-  assert.equal(answer.headline, "1 test file reviewed — no problems found.");
+  assert.equal(answer.headline, "1 test file reviewed: no problems found.");
 });
 
 test("review: the answer key is never read — it's left out and says so", () => {
@@ -80,13 +80,15 @@ test("review: the answer key is never read — it's left out and says so", () =>
   assert.ok(answer.did.some((d) => d.includes("`demo/answer-key`") && d.includes("off limits")));
 });
 
-test("review: the answer has the three parts, with clickable file:line", () => {
+test("review: the answer is short — result, one row per problem with what to do, then what was done", () => {
   const text = renderAnswer(review(new Project(REPO), ["demo/colleague/wip.spec.ts"]));
-  for (const heading of ["### What I did", "### What I found", "### What I need from you"]) {
-    assert.ok(text.includes(heading), heading);
-  }
-  assert.ok(text.includes("[demo/colleague/wip.spec.ts:3](demo/colleague/wip.spec.ts:3)"));
-  assert.ok(text.includes("Nothing was run and nothing was changed."));
+  assert.ok(text.startsWith("**2 problems in 1 file: 1 must fix, 1 should fix.**\n\n| Where | Problem | What to do |"), text.slice(0, 120));
+  assert.ok(text.includes("| [wip.spec.ts:3](demo/colleague/wip.spec.ts:3) | **Must fix:** `.only` left in | Remove `.only`."));
+  assert.ok(text.includes("**Why these matter**"));
+  assert.ok(text.includes("**What to do**\nFix them in the tests, or send this list to the tests' author."));
+  assert.match(text, /\*What I did: Read 1 test file \(2 tests\) .* Nothing was run or changed\.\*\n$/);
+  // The plugin's own wording only restates the problem: it isn't repeated.
+  assert.doesNotMatch(text, /Unexpected focused test/);
 });
 
 test("review: a path outside the project is refused", () => {
@@ -269,7 +271,7 @@ test("review: every finding names who found it — the plugin or Proofwright", (
     ["fragile-selector", "retries", "secret-in-test", "serial-mode", "shared-account", "shared-state"],
   );
   const text = renderAnswer(review(new Project(REPO), ["demo/colleague/wip.spec.ts"]));
-  assert.ok(text.includes("*Found by:* eslint-plugin-playwright `no-focused-test`"), text);
+  assert.ok(text.includes("- `.only` left in (found by eslint-plugin-playwright `no-focused-test`): "), text);
 });
 
 test("review: the tester's own ESLint config is never read", () => {
@@ -325,5 +327,10 @@ test("review: the whole repository — Proofwright's own unit tests aren't Playw
     answer.data.findings.filter((f) => f.file.startsWith("demo/failures/")).map((f) => f.rule),
     ["fragile-selector", "retries", "no-assertion"],
   );
-  assert.equal(answer.data.findings.length, 22);
+  // Nothing anywhere else. demo/generated/ holds what Playwright's generator wrote in a
+  // walkthrough — different every time (the owner's first one left 5 real problems there).
+  assert.deepEqual(
+    answer.data.findings.filter((f) => !/^demo\/(colleague|failures|generated)\//.test(f.file)).map((f) => `${f.file}:${f.line}`),
+    [],
+  );
 });

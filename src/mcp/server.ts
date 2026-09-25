@@ -12,9 +12,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
+  ErrorCode,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
   ListToolsRequestSchema,
+  McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import { type Answer, renderAnswer } from "../answer.js";
 import { CHARACTER_KINDS, DataError, FIELD_KINDS, type FieldSpec } from "../data/generate.js";
@@ -33,7 +35,9 @@ export const VERSION: string = JSON.parse(
 ).version;
 
 const INSTRUCTIONS = `Proofwright works with a human tester on Playwright tests.
-Every tool answers in three parts — What I did, What I found, What I need from you — show the tester that answer as it is, and put the questions in "What I need from you" to them rather than answering them yourself.
+Each tool answers with the result first, then "What to do", then one line on what it did. Show the tester that answer as it is, and put the questions in "What to do" to them rather than answering them yourself.
+Write to the tester the same way: clear, simple English, short sentences, only what they need to know and what to do. Many testers don't speak English as their first language. Give details when something needs explaining.
+Expected results come from the tester's request and from what the app promises (its requirements, its documentation, what a user sees) — never from the app's source code. Don't read the app's code to decide what's right: a test written from the code confirms its bugs.
 Never change what a test expects, and never mark anything approved, without the tester's explicit yes: pass approve_plan the tester's own words, exactly as they said them — never your own.
 Playwright's own agents explore, write and run (the playwright-test-planner and playwright-test-generator); Proofwright doesn't replace them. Never use the playwright-test-healer: it changes what tests expect to make them pass.
 prove runs the tests many times and takes minutes: tell the tester before you call it.`;
@@ -244,7 +248,7 @@ const TOOLS: Tool[] = [
   {
     name: "prove",
     description:
-      "Prove tests can fail: run them with the app broken on purpose and show which notice. Proofwright runs them once with nothing broken to learn which API calls each test makes, then once per call with that call failing (a server error, or empty lists), and once with every answer late. A test that still passes when its own action fails (a POST, PUT, PATCH or DELETE it makes) is reported with a screenshot and a trace of the page it passed on. Works on any Playwright test through a temporary config beside the tester's, without changing their tests or config. Takes minutes: one run per call broken; stops first and asks when it would take more than maxRuns.",
+      "Prove tests can fail: run them with the app broken on purpose and show which notice. Proofwright runs them once with nothing broken to learn which API calls each test's steps make, then once per call with that call failing (a server error, or empty lists), once with every answer late, and — for a step a test repeats — once with only the repeat's answer late and changed. A test that stays green while its own step fails, or that checks the page before its step's answer arrives, needs a better check; the answer names the step and line, with a screenshot. Works on any Playwright test through a temporary config beside the tester's, without changing their tests or config. Takes minutes: one run per call broken; stops first and asks when it would take more than maxRuns.",
     inputSchema: {
       type: "object",
       properties: {
@@ -290,28 +294,51 @@ const TOOLS: Tool[] = [
   },
 ];
 
-export function createServer(defaultRoot: string): Server {
+/** How long the approval form waits for the tester. */
+export const FORM_TIMEOUT_MS = 15 * 60_000;
+
+export interface ServerOptions {
+  /** How long the approval form waits (tests use a short one). */
+  formTimeoutMs?: number;
+}
+
+export function createServer(defaultRoot: string, options: ServerOptions = {}): Server {
   const server = new Server(
     { name: "proofwright", version: VERSION },
     { capabilities: { tools: {}, prompts: {} }, instructions: INSTRUCTIONS },
   );
+  const formTimeoutMs = options.formTimeoutMs ?? FORM_TIMEOUT_MS;
 
-  /** Ask the tester directly, when the client can show a form (MCP elicitation). */
+  /**
+   * Ask the tester directly, when the client can show a form (MCP elicitation).
+   * One step: Accept approves, Decline doesn't — no box to tick, which testers
+   * missed (Accept with the box unticked approved nothing).
+   */
   const askTester = (): AskTester | undefined => {
     if (!server.getClientCapabilities()?.elicitation) return undefined;
     return async (message) => {
-      const result = await server.elicitInput({
-        message,
-        requestedSchema: {
-          type: "object",
-          properties: {
-            approve: { type: "boolean", title: "Approve these test cases as written?", default: false },
-            words: { type: "string", title: "Anything to add? (optional)" },
+      let result;
+      try {
+        result = await server.elicitInput(
+          {
+            message,
+            requestedSchema: {
+              type: "object",
+              properties: { words: { type: "string", title: "Anything to add? (optional)" } },
+            },
           },
-          required: ["approve"],
-        },
-      });
-      if (result.action !== "accept" || result.content?.approve !== true) return null;
+          { timeout: formTimeoutMs },
+        );
+      } catch (err) {
+        if (err instanceof McpError && err.code === ErrorCode.RequestTimeout) {
+          const minutes = Math.round(formTimeoutMs / 60_000);
+          const secs = Math.max(1, Math.round(formTimeoutMs / 1000));
+          const waited = minutes >= 1 ? `${minutes} minute${minutes === 1 ? "" : "s"}` : `${secs} second${secs === 1 ? "" : "s"}`;
+          throw new ProjectError(`The approval form closed after ${waited} without an answer, so nothing was approved. Ask again when you're ready.`);
+        }
+        throw err;
+      }
+      if (result.action !== "accept") return null;
       const note = typeof result.content?.words === "string" ? result.content.words.trim() : "";
       return { words: note || "Approved in Proofwright's form." };
     };
@@ -328,7 +355,7 @@ export function createServer(defaultRoot: string): Server {
     } catch {
       project = undefined; // the prompt still works without the project's settings
     }
-    return renderPrompt(request.params.name, request.params.arguments ?? {}, project);
+    return renderPrompt(request.params.name, request.params.arguments ?? {}, project, server.getClientVersion()?.name);
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({

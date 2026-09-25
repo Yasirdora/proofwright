@@ -25,7 +25,10 @@ export interface ApprovePlanInput {
   words?: string;
 }
 
-/** Asks the tester directly; resolves to their answer, or null when they declined. */
+/**
+ * Asks the tester directly, in a form with Accept and Decline: resolves to their
+ * words when they accept, or null when they decline or close it.
+ */
 export type AskTester = (message: string) => Promise<{ words: string } | null>;
 
 export interface ApprovePlanData {
@@ -82,9 +85,16 @@ export async function approvePlan(
       if (approval) {
         for (const c of ready) ledger.approvals[c.id] = { ...approval, fingerprint: c.fingerprint };
         approvedNow.push(...ready.map((c) => c.id));
-        did.push(`Recorded your approval of ${approvedNow.join(", ")} (${approval.how}): "${approval.words}".`);
+        // The cases they didn't pick are left out on purpose: not asked about again.
+        if (!all) {
+          const others = cases.filter((c) => !c.approval && !approvedNow.includes(c.id) && c.blocking.length === 0).map((c) => c.id);
+          ledger.leftOut = [...new Set([...(ledger.leftOut ?? []).filter((id) => !approvedNow.includes(id)), ...others])];
+        } else {
+          ledger.leftOut = [];
+        }
+        did.push(`Recorded your approval (${approval.how}): "${approval.words}".`);
       } else {
-        did.push("Asked you to approve; you didn't, so nothing was approved.");
+        did.push("Asked you in the form; you declined, so nothing was approved.");
       }
       cases = buildCases(plan, ledger);
     }
@@ -95,46 +105,60 @@ export async function approvePlan(
   const casesFile = project.stateFile("cases", `${slug}.md`);
   fs.writeFileSync(casesFile, renderCases(plan, planRel, cases, ledger.request));
   did.push(`Wrote the test cases to \`${project.relative(casesFile)}\`.`);
+  const casesRel = project.relative(casesFile);
   const forGenerator = approvedPlan(plan, cases);
   const approvedFile = path.join(path.dirname(planAbs), `${slug}.approved.md`);
   let approvedRel: string | undefined;
   if (forGenerator) {
     fs.writeFileSync(approvedFile, renderPlan(forGenerator));
     approvedRel = project.relative(approvedFile);
-    did.push(`Wrote the approved cases, as a plan for Playwright's generator, to \`${approvedRel}\`.`);
+    did.push(`Wrote the approved cases for Playwright's generator to \`${approvedRel}\`.`);
   } else if (fs.existsSync(approvedFile)) {
     fs.rmSync(approvedFile);
     did.push(`Removed \`${project.relative(approvedFile)}\`: no case is approved any more.`);
   }
 
   const approved = cases.filter((c) => c.approval);
-  const blocked = cases.filter((c) => c.blocking.length > 0);
-  const drafts = cases.filter((c) => !c.approval && c.blocking.length === 0);
-  const questions = cases.flatMap((c) => c.questions.map((q) => `**${c.id}**: ${q}`));
+  const leftOut = cases.filter((c) => c.leftOut);
+  const blocked = cases.filter((c) => !c.approval && !c.leftOut && c.blocking.length > 0);
+  const drafts = cases.filter((c) => !c.approval && !c.leftOut && c.blocking.length === 0);
+  const questions = [...blocked, ...drafts].flatMap((c) => c.questions.map((q) => `**${c.id}**: ${q}`));
   const need: string[] = [];
-  for (const c of blocked) need.push(`**${c.id}** can't be approved: ${c.blocking.join("; ")}. Change the plan, or drop the case.`);
+  for (const c of blocked) need.push(`**${c.id}** can't be approved: ${c.blocking.join("; ")}. Change the plan, or leave the case out.`);
   if (refused.length > 0 && blocked.length === 0) need.push(`${refused.join(", ")} can't be approved yet.`);
+  if (questions.length > 0) need.push(`Answer the ${questions.length === 1 ? "question" : `${questions.length} questions`} above, or approve the cases as they are.`);
   if (drafts.length > 0) {
-    need.push(
-      `Approve the cases you're happy with — all of them, or by number (${drafts.map((c) => c.id).join(", ")}) — in your own words.` +
-        (questions.length > 0 ? ` Approving accepts the ${count(questions.length, "open question")} below as they are; or answer them first and I'll update the plan.` : ""),
-    );
-    need.push(...questions);
+    need.push(`Say which cases you approve: all, or by number (${ranges(drafts.map((c) => c.id))}).`);
   }
 
+  const headline =
+    approvedNow.length > 0
+      ? `Approved ${count(approvedNow.length, "test case")}.${leftOut.length > 0 ? ` Left out: ${ranges(leftOut.map((c) => c.id))}.` : ""}${drafts.length > 0 ? ` ${drafts.length} still to decide.` : ""}`
+      : drafts.length + blocked.length === 0
+        ? `All ${count(cases.length, "test case")} are decided: ${approved.length} approved${leftOut.length > 0 ? `, ${leftOut.length} left out` : ""}.`
+        : `${count(cases.length, "test case")} to check${questions.length > 0 ? `, ${questions.length === 1 ? "1 question" : `${questions.length} questions`} for you` : ""}.`;
   return {
-    headline:
-      approvedNow.length > 0
-        ? `Approved ${approvedNow.join(", ")} — ${approved.length} of ${cases.length} cases are approved now.`
-        : `${count(cases.length, "test case")} from Playwright's plan: ${approved.length} approved, ${drafts.length} to approve, ${blocked.length} can't be approved yet.`,
+    headline,
     did,
-    found: renderSummary(cases, questions),
+    found: renderSummary(cases, questions, casesRel),
     need,
-    next: approvedRel
-      ? `Next: Playwright's generator writes one test per approved case from \`${approvedRel}\`; then I review what it wrote.`
-      : undefined,
-    data: { plan: planRel, cases, casesFile: project.relative(casesFile), ...(approvedRel ? { approvedPlan: approvedRel } : {}), approvedNow },
+    next: approvedRel ? `Next: Playwright's generator writes one test per approved case from \`${approvedRel}\`.` : undefined,
+    data: { plan: planRel, cases, casesFile: casesRel, ...(approvedRel ? { approvedPlan: approvedRel } : {}), approvedNow },
   };
+}
+
+/** "TC-001 – TC-011, TC-013" */
+function ranges(ids: string[]): string {
+  const nums = ids.map((id) => Number(id.slice(3))).sort((a, b) => a - b);
+  const out: string[] = [];
+  const tc = (n: number) => `TC-${String(n).padStart(3, "0")}`;
+  for (let i = 0; i < nums.length; i++) {
+    let j = i;
+    while (j + 1 < nums.length && nums[j + 1] === nums[j] + 1) j++;
+    out.push(j - i >= 2 ? `${tc(nums[i])} – ${tc(nums[j])}` : nums.slice(i, j + 1).map(tc).join(", "));
+    i = j;
+  }
+  return out.join(", ");
 }
 
 async function getApproval(
@@ -146,12 +170,14 @@ async function getApproval(
 ): Promise<Omit<Approval, "fingerprint"> | null> {
   const on = today.toISOString().slice(0, 10);
   if (ask) {
-    const questions = cases.flatMap((c) => c.questions.map((q) => `${c.id}: ${q}`));
+    const questions = cases.reduce((n, c) => n + c.questions.length, 0);
     const message = [
-      `Proofwright: approve ${count(cases.length, "test case")} from ${planRel}?`,
+      `Approve ${count(cases.length, "test case")}?`,
       "",
       ...cases.map((c) => `${c.id} · ${c.name}`),
-      ...(questions.length > 0 ? ["", "Open questions — approving accepts them as they are:", ...questions] : []),
+      "",
+      ...(questions > 0 ? [`${questions === 1 ? "1 open question" : `${questions} open questions`} (in the test cases file): approving accepts ${questions === 1 ? "it" : "them"} as ${questions === 1 ? "it is" : "they are"}.`] : []),
+      "Accept = approve these cases.   Decline = approve nothing.",
     ].join("\n");
     const answer = await ask(message);
     return answer ? { on, words: answer.words, how: "asked you directly" } : null;
@@ -164,16 +190,17 @@ async function getApproval(
   return { on, words: words.trim(), how: "your words, relayed by the AI client" };
 }
 
-function renderSummary(cases: TestCase[], questions: string[]): string {
+function renderSummary(cases: TestCase[], questions: string[], casesFile: string): string {
   const rows = cases.map((c) => {
-    const status = c.approval ? `approved ${c.approval.on}` : c.blocking.length > 0 ? "can't be approved yet" : "to approve";
-    const checks = c.steps.reduce((n, s) => n + s.expected.length, 0);
-    return `| **${c.id}** | ${c.name.replace(/\|/g, "\\|")} | ${c.steps.length} steps, ${count(checks, "check")} | ${status} |`;
+    const status = c.approval ? "✅ approved" : c.leftOut ? "left out" : c.blocking.length > 0 ? "⛔ can't be approved" : "to decide";
+    return `| ${c.id} | ${c.name.replace(/\|/g, "\\|")} | ${status} |`;
   });
   return [
-    "| Case | Name | Steps | Status |",
-    "|---|---|---|---|",
+    "| Case | What it checks | Status |",
+    "|---|---|---|",
     ...rows,
-    ...(questions.length > 0 ? ["", `${count(questions.length, "open question")} — listed below under "What I need from you".`] : []),
+    ...(questions.length > 0 ? ["", "**Questions**", ...questions.map((q) => `- ${q}`)] : []),
+    "",
+    `Steps, data and expected results: \`${casesFile}\`.`,
   ].join("\n");
 }

@@ -1,6 +1,11 @@
 {
-  "ignore": ["demo/answer-key/**"],
+  "ignore": [
+    "demo/answer-key/**"
+  ],
   "project": "generated",
+  "requirements": [
+    "demo/README.md"
+  ],
   "seed": "demo/generated/seed.spec.ts",
   "testsDir": "demo/generated"
 }

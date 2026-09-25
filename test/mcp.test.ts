@@ -9,16 +9,21 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { createServer } from "../src/mcp/server.js";
 import { renderPlan } from "../src/plan/playwright-plan.js";
 import { COUPONS } from "./fixtures.js";
 
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const CLI = fileURLToPath(new URL("../src/cli.js", import.meta.url));
 
-async function connect(root: string, withForm?: (message: string) => { approve: boolean; words?: string } | null) {
+/** The tester's answer in Proofwright's form: Accept (with optional words), or Decline. */
+type FormAnswer = { words?: string } | null;
+
+async function connect(root: string, withForm?: (message: string) => FormAnswer, clientName = "proofwright-test") {
   const client = new Client(
-    { name: "proofwright-test", version: "0.0.0" },
+    { name: clientName, version: "0.0.0" },
     withForm ? { capabilities: { elicitation: {} } } : {},
   );
   if (withForm) {
@@ -40,7 +45,10 @@ test("mcp: offers its six tools, with schemas and instructions", async () => {
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), ["approve_plan", "explain", "prove", "report", "review", "test_data"]);
     for (const t of tools) assert.ok(t.description && t.description.length > 80 && t.inputSchema.type === "object");
-    assert.match(client.getInstructions() ?? "", /What I did, What I found, What I need from you/);
+    const instructions = client.getInstructions() ?? "";
+    assert.match(instructions, /the result first, then "What to do"/);
+    assert.match(instructions, /clear, simple English/);
+    assert.match(instructions, /never from the app's source code/);
     assert.equal(client.getServerVersion()?.name, "proofwright");
   } finally {
     await client.close();
@@ -53,8 +61,9 @@ test("mcp: review answers in three parts, with the findings as structured conten
     const r = await client.callTool({ name: "review", arguments: { paths: ["demo/colleague"] } });
     assert.ok(!isError(r), text(r));
     const t = text(r);
-    assert.ok(t.startsWith("**19 problems in 2 files: 8 high, 11 medium.**"), t.slice(0, 120));
-    for (const h of ["### What I did", "### What I found", "### What I need from you"]) assert.ok(t.includes(h), h);
+    assert.ok(t.startsWith("**19 problems in 2 files: 8 must fix, 11 should fix.**"), t.slice(0, 120));
+    assert.ok(t.includes("\n**What to do**\n"));
+    assert.match(t, /\n\*What I did: .+\*\n$/);
     const data = (r as unknown as { structuredContent: { data: { findings: unknown[] } } }).structuredContent.data;
     assert.equal(data.findings.length, 19);
   } finally {
@@ -115,7 +124,7 @@ test("mcp: approve_plan in an app that can't show a form needs the tester's word
   try {
     const shown = await client.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md" } });
     assert.ok(!isError(shown), text(shown));
-    assert.match(text(shown), /^\*\*3 test cases from Playwright's plan/);
+    assert.match(text(shown), /^\*\*3 test cases to check/);
     const noWords = await client.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md", approve: ["TC-001"] } });
     assert.ok(isError(noWords));
     assert.match(text(noWords), /tester's own words/);
@@ -130,14 +139,15 @@ test("mcp: approve_plan in an app that can't show a form needs the tester's word
 test("mcp: approve_plan asks the tester directly when the app can show a form", async () => {
   const dir = planProject();
   let shownToTester = "";
-  const client = await connect(dir, (message) => ((shownToTester = message), { approve: true, words: "looks right" }));
+  const client = await connect(dir, (message) => ((shownToTester = message), { words: "looks right" }));
   try {
     const r = await client.callTool({
       name: "approve_plan",
       arguments: { plan: "specs/coupons.plan.md", approve: ["all"], words: "the AI approves" },
     });
     assert.ok(!isError(r), text(r));
-    assert.match(shownToTester, /Proofwright: approve 2 test cases/);
+    assert.match(shownToTester, /^Approve 2 test cases\?/);
+    assert.match(shownToTester, /Accept = approve these cases\. {3}Decline = approve nothing\./);
     const cases = fs.readFileSync(path.join(dir, "proofwright/cases/coupons.md"), "utf8");
     assert.match(cases, /"looks right" \(asked you directly\)/);
     assert.doesNotMatch(cases, /the AI approves/);
@@ -148,9 +158,37 @@ test("mcp: approve_plan asks the tester directly when the app can show a form", 
   try {
     const r = await declined.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md", approve: ["TC-001"] } });
     assert.ok(!isError(r), text(r));
-    assert.match(text(r), /you didn't, so nothing was approved/);
+    assert.match(text(r), /you declined, so nothing was approved/);
   } finally {
     await declined.close();
+  }
+  // Accept alone approves: there's no box to tick (testers pressed Accept with it unticked).
+  const acceptOnly = await connect(planProject(), () => ({}));
+  try {
+    const r = await acceptOnly.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md", approve: ["TC-001"] } });
+    assert.match(text(r), /Approved 1 test case\./);
+    assert.match(text(r), /"Approved in Proofwright's form\." \(asked you directly\)|Recorded your approval \(asked you directly\)/);
+  } finally {
+    await acceptOnly.close();
+  }
+});
+
+test("mcp: the approval form waits, then closes with a clear answer — nothing approved", async () => {
+  const dir = planProject();
+  const server = createServer(dir, { formTimeoutMs: 300 });
+  const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "proofwright-test", version: "0.0.0" }, { capabilities: { elicitation: {} } });
+  client.setRequestHandler(ElicitRequestSchema, () => new Promise(() => {})); // the tester never answers
+  await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+  try {
+    const started = Date.now();
+    const r = await client.callTool({ name: "approve_plan", arguments: { plan: "specs/coupons.plan.md", approve: ["TC-001"] } });
+    assert.ok(Date.now() - started < 10_000, "it waited the time it was given, not the SDK's own 60 s");
+    assert.ok(isError(r));
+    assert.equal(text(r), "**I couldn't do that.** The approval form closed after 1 second without an answer, so nothing was approved. Ask again when you're ready.");
+    assert.equal(fs.existsSync(path.join(dir, "specs/coupons.approved.md")), false);
+  } finally {
+    await client.close();
   }
 });
 
@@ -173,6 +211,14 @@ test("mcp: the proofwright prompt turns one sentence into the guided session", a
       "call Proofwright's prove",
       'with paths set to the files the generator wrote and project "generated"',
       "the tester decides how",
+      // the rules from the owner's walkthrough
+      "Expected results come from the request and from what the app promises in `demo/README.md`",
+      "Never read the app's source code",
+      'starting with "Not promised:"',
+      "Check each expected result exactly as the approved case says, even when the app does something else",
+      "Wait for each action to finish",
+      "Never write a password or other secret as a fixed value",
+      "Accept approves, Decline doesn't",
       // this repository's proofwright/config.json
       'project "generated" and seed file "demo/generated/seed.spec.ts"',
       "under `demo/generated/`",
@@ -180,6 +226,22 @@ test("mcp: the proofwright prompt turns one sentence into the guided session", a
       assert.ok(body.includes(needle), needle);
     }
     await assert.rejects(() => client.getPrompt({ name: "proofwright", arguments: { request: " " } }));
+  } finally {
+    await client.close();
+  }
+});
+
+test("mcp: in Claude Code, which passes a prompt only the first word, the AI is told to use everything the tester typed", async () => {
+  const client = await connect(REPO, undefined, "claude-code");
+  try {
+    // What Claude Code sends for "/mcp__proofwright__proofwright check that coupon codes work at checkout" (2.1.236).
+    const p = await client.getPrompt({ name: "proofwright", arguments: { request: "check" } });
+    const body = (p.messages[0].content as { text: string }).text;
+    assert.match(body, /^The tester's request is everything they typed after the command, in their own words\. \(This app gives Proofwright only the first word: "check"\.\)/);
+    assert.match(body, /name the plan specs\/<name>\.plan\.md, <name> being 2 to 5 words from the request/);
+    assert.match(body, /request "<the tester's full words>"/);
+    assert.doesNotMatch(body, /The tester asked: "check"/);
+    assert.doesNotMatch(body, /specs\/plan\.plan\.md/);
   } finally {
     await client.close();
   }

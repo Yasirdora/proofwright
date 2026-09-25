@@ -23,6 +23,11 @@ export interface ProjectConfig {
   seed?: string;
   /** Where Playwright's generator should write the tests. */
   testsDir?: string;
+  /**
+   * Files that say what the app promises (requirements, a README). Expected
+   * results come from these and from the tester — never from the app's code.
+   */
+  requirements?: string[];
 }
 
 export class ProjectError extends Error {}
@@ -93,6 +98,13 @@ function readConfig(root: string): ProjectConfig {
     throw new ProjectError(`${CONFIG_FILE}: "ignore" must be a list of path patterns.`);
   }
   const out: ProjectConfig = { ignore };
+  const requirements = (raw as { requirements?: unknown }).requirements;
+  if (requirements !== undefined) {
+    if (!Array.isArray(requirements) || requirements.some((r) => typeof r !== "string" || !r.trim())) {
+      throw new ProjectError(`${CONFIG_FILE}: "requirements" must be a list of files.`);
+    }
+    out.requirements = requirements;
+  }
   for (const key of ["project", "seed", "testsDir"] as const) {
     const v = (raw as Record<string, unknown>)[key];
     if (v === undefined) continue;

@@ -28,14 +28,26 @@ import { Duplex } from "node:stream";
 import * as tls from "node:tls";
 import * as zlib from "node:zlib";
 
+/** The faults a tester can ask for. */
 export const FAULT_KINDS = ["error", "empty", "malformed", "slow"] as const;
-export type FaultKind = (typeof FAULT_KINDS)[number];
+/**
+ * Plus one a proof uses on its own: "changed" — from the 2nd (3rd …) time a
+ * test repeats an action on, every JSON answer arrives late with every number
+ * in it changed: the action's own answer and the ones after it (an app often
+ * reloads what it shows, like the cart after "Apply"). A test that checks the
+ * page before those answers arrive still passes; one that waits for them sees
+ * different numbers and fails.
+ */
+export type FaultKind = (typeof FAULT_KINDS)[number] | "changed";
 
 export interface Fault {
   kind: FaultKind;
   /** The endpoints to break (`Call.endpoint`); every API call when absent. */
   endpoints?: string[];
-  /** slow: how late each answer arrives. Default 1000. */
+  /** Only the n-th call to those endpoints since the fault was set (1 = the first) — for
+   *  "changed": that call and every JSON answer after it. */
+  nth?: number;
+  /** slow, changed: how late each answer arrives. Default 1000. */
   delayMs?: number;
 }
 
@@ -53,10 +65,14 @@ export interface Call {
   json: boolean;
   /** The JSON answer holds a list somewhere. */
   lists: boolean;
+  /** The JSON answer holds a number somewhere (so "changed" can change it). */
+  numbers: boolean;
   status: number;
   https: boolean;
   /** The fault this call got, if it got one. */
   broken?: FaultKind;
+  /** Its place among the calls the fault names (1 = the first). */
+  nth?: number;
 }
 
 export interface FaultProxy {
@@ -98,6 +114,22 @@ export function endpointOf(method: string, host: string, pathname: string): stri
 export const isAction = (method: string) => !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
 /** application/json, application/problem+json, text/json — not application/x-ndjson, which streams. */
 export const isJson = (contentType: string) => /[/+]json\s*(;|$)/i.test(contentType);
+
+/** Every number in a JSON value changed (+1); everything else as it was. Undefined when there's none. */
+export function renumbered(v: unknown): unknown {
+  let found = false;
+  const walk = (x: unknown): unknown => {
+    if (typeof x === "number") {
+      found = true;
+      return x + 1;
+    }
+    if (Array.isArray(x)) return x.map(walk);
+    if (x && typeof x === "object") return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, walk(y)]));
+    return x;
+  };
+  const out = walk(v);
+  return found ? out : undefined;
+}
 
 /** Every list in a JSON value emptied; everything else as it was. */
 export function emptied(v: unknown): unknown {
@@ -235,11 +267,20 @@ export async function startProxy(options: ProxyOptions = {}): Promise<FaultProxy
     },
   };
 
+  /** "changed" has started: its n-th call came, and every JSON answer since is changed. */
+  let changing: Fault | undefined;
   const breaks = (call: Call, kinds: FaultKind[]): FaultKind | undefined => {
     const f = state.fault;
     if (!f || !kinds.includes(f.kind)) return undefined;
-    return f.endpoints === undefined || f.endpoints.includes(call.endpoint) ? f.kind : undefined;
+    if (f.kind === "changed" && changing === f) return f.kind;
+    if (f.endpoints !== undefined && !f.endpoints.includes(call.endpoint)) return undefined;
+    if (f.nth !== undefined && call.nth !== f.nth) return undefined;
+    if (f.kind === "changed") changing = f;
+    return f.kind;
   };
+  /** How many calls the current fault's endpoints have had. */
+  let counted: Fault | undefined;
+  let count = 0;
 
   function handle(req: http.IncomingMessage, res: http.ServerResponse, origin?: string): void {
     let url: URL;
@@ -261,14 +302,19 @@ export async function startProxy(options: ProxyOptions = {}): Promise<FaultProxy
       action: isAction(method),
       json: false,
       lists: false,
+      numbers: false,
       status: 0,
       https: secure,
     };
     state.calls.push(call);
+    if (state.fault?.endpoints?.includes(call.endpoint)) {
+      if (counted !== state.fault) [counted, count] = [state.fault, 0];
+      call.nth = ++count;
+    }
 
     // A server error: the call never reaches the app, as if its server had failed.
     // Only a named endpoint gets it — every one of those was an API call in the clean run.
-    if (state.fault?.kind === "error" && state.fault.endpoints?.includes(call.endpoint)) {
+    if (breaks(call, ["error"]) && state.fault?.endpoints) {
       req.resume();
       Object.assign(call, { status: 500, json: true, broken: "error" });
       res.writeHead(500, { "content-type": "application/json", "content-length": Buffer.byteLength(ERROR_BODY) });
@@ -306,7 +352,8 @@ export async function startProxy(options: ProxyOptions = {}): Promise<FaultProxy
     call.json = isJson(String(answer.headers["content-type"] ?? ""));
     const api = call.action || call.json;
     const slow = api ? breaks(call, ["slow"]) : undefined;
-    const delay = slow ? (state.fault?.delayMs ?? 1000) : 0;
+    const changing = call.json ? breaks(call, ["changed"]) : undefined;
+    const delay = slow || changing ? (state.fault?.delayMs ?? 1000) : 0;
     if (slow) call.broken = "slow";
     const later = (send: () => void) => (delay > 0 ? setTimeout(send, delay) : send());
 
@@ -332,12 +379,17 @@ export async function startProxy(options: ProxyOptions = {}): Promise<FaultProxy
       } catch {
         // Not JSON after all, or empty (a HEAD): passed through as it came.
       }
-      if (readable) call.lists = hasList(parsed);
+      if (readable) {
+        call.lists = hasList(parsed);
+        call.numbers = renumbered(parsed) !== undefined;
+      }
 
       let body: Buffer | undefined;
-      const kind = breaks(call, ["empty", "malformed"]);
+      const kind = breaks(call, ["empty", "malformed", "changed"]);
       if (kind === "empty" && readable && call.lists) body = Buffer.from(JSON.stringify(emptied(parsed)));
       if (kind === "malformed") body = Buffer.from(BROKEN_JSON);
+      const changed = kind === "changed" && readable ? renumbered(parsed) : undefined;
+      if (changed !== undefined) body = Buffer.from(JSON.stringify(changed));
       if (body) call.broken = kind;
 
       const headers = responseHeaders(answer.headers);

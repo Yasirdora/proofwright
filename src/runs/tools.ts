@@ -50,15 +50,14 @@ export function report(project: Project, input: ReportInput = {}): Answer<Report
     did.push(`Read Playwright's JSON report \`${input.from}\` and kept it as run ${run.id}.`);
   } else if (input.run) {
     run = runPlaywright(project, input.run === true ? {} : input.run);
-    did.push(`Ran Playwright's runner: \`${(run.source as { ran: string[] }).ran.join(" ")}\` — the project's own config; a JSON report and traces on failure were the only additions.`);
-    did.push(`Kept the results and the evidence of every failure as run ${run.id}.`);
+    did.push(`Ran \`${(run.source as { ran: string[] }).ran.join(" ")}\` with your config, and kept every failure's screenshot and trace (run ${run.id}).`);
   } else {
     run = latestRun(project);
     did.push(`Reported on the last recorded run, ${run.id} (nothing was run now).`);
   }
   const prev = previousRun(project, run.id);
   const changes = compare(prev, run);
-  if (prev) did.push(`Compared it with the run before, ${prev.id}.`);
+  if (prev) did.push(`Compared it with the run before (${prev.id}).`);
 
   const failures = run.tests.filter((t) => t.status === "failed" || t.status === "flaky");
   const diagnoses = failures.map((t) => ({ test: t.id, title: t.title, diagnosis: diagnose(project, run, t) }));
@@ -74,7 +73,7 @@ export function report(project: Project, input: ReportInput = {}): Answer<Report
   const found = renderReport(run, prev, changes, diagnoses);
   const reportFile = project.stateFile("reports", `${run.id}.md`);
   fs.writeFileSync(reportFile, `# Test report — run ${run.id}\n\n**${headline}**\n\n${found}\n`);
-  did.push(`Wrote this report to \`${project.relative(reportFile)}\`.`);
+  did.push(`Saved this report as \`${project.relative(reportFile)}\`.`);
 
   return {
     headline,
@@ -82,9 +81,10 @@ export function report(project: Project, input: ReportInput = {}): Answer<Report
     found,
     need: [
       ...(run.focused
-        ? [`Remove the \`.only\` at ${run.focused.map((f) => `\`${f}\``).join(", ")} and ask for a run again — or tell me you meant to run only ${run.focused.length === 1 ? "that test" : "those tests"}.`]
+        ? [`Remove the \`.only\` at ${run.focused.map((f) => `\`${f}\``).join(", ")} and run again — or tell me you meant to run only ${run.focused.length === 1 ? "that test" : "those tests"}.`]
         : []),
-      ...(diagnoses.length > 0 ? [`Say which failure to explain in depth — e.g. "explain ${diagnoses[0].title}" — or "explain all".`] : []),
+      ...diagnoses.map(({ title, diagnosis }) => `"${title}": ${TODO[diagnosis.kind]}`),
+      ...(diagnoses.length > 0 ? [`For the full reasons, ask me to explain a failure — for example "explain ${diagnoses[0].title}".`] : []),
     ],
     next: diagnoses.length === 0 ? "Nothing failed." : undefined,
     data: { run, ...(prev ? { previous: prev.id } : {}), diagnoses, reportFile: project.relative(reportFile) },
@@ -265,6 +265,7 @@ function renderReport(
   diagnoses: ReportData["diagnoses"],
 ): string {
   const out: string[] = [];
+  const list = (ts: RunTest[]) => ts.map((t) => `"${t.title}"`).join(", ");
   if (run.focused) {
     out.push(
       `**Only part of the selection ran.** Playwright ran only the tests marked \`test.only\` (${run.focused.map((f) => `[${f}](${f})`).join(", ")}); the other tests in the selection didn't run, so this report can't say whether they pass.`,
@@ -273,33 +274,41 @@ function renderReport(
   }
   if (run.errors.length > 0) out.push("**Playwright reported for the whole run:**", ...run.errors.map((e) => `- ${e}`), "");
   if (prev) {
-    const list = (ts: RunTest[]) => (ts.length > 0 ? ts.map((t) => `"${t.title}"`).join(", ") : "none");
-    out.push(
-      `**Since the last run** (${prev.id}${run.git && prev.git && run.git.head !== prev.git.head ? ", on different code" : ""}):`,
-      `- New failures: ${list(changes.newFailures)}`,
-      `- Still failing: ${list(changes.stillFailing)}`,
-      `- Fixed: ${list(changes.fixed)}`,
-      ...(changes.newTests.length > 0 ? [`- New tests: ${list(changes.newTests)}`] : []),
-      "",
-    );
+    const parts = [
+      changes.newFailures.length > 0 ? `new failures: ${list(changes.newFailures)}` : "no new failures",
+      ...(changes.fixed.length > 0 ? [`fixed: ${list(changes.fixed)}`] : []),
+      ...(changes.stillFailing.length > 0 ? [`${changes.stillFailing.length} still failing`] : []),
+      ...(changes.newTests.length > 0 ? [`${count(changes.newTests.length, "new test")}`] : []),
+    ];
+    out.push(`**Since the last run**${run.git && prev.git && run.git.head !== prev.git.head ? " (the code changed)" : ""}: ${parts.join("; ")}.`, "");
   }
   if (diagnoses.length > 0) {
-    out.push("| Test | What it looks like | How sure | Evidence |", "|---|---|---|---|");
+    out.push("| Test | What it looks like | Evidence |", "|---|---|---|");
     for (const { test, title, diagnosis } of diagnoses) {
       const t = run.tests.find((x) => x.id === test)!;
-      const ev = [t.evidence.screenshot ? `[screenshot](${t.evidence.screenshot})` : "", t.evidence.trace ? "trace" : ""].filter(Boolean).join(", ");
-      out.push(`| "${esc(title)}" | **${diagnosis.kind}** — ${esc(diagnosis.summary)} | ${diagnosis.confidence} | ${ev || "—"} |`);
+      const where = t.error?.line ? `${t.error.file}:${t.error.line}` : `${t.file}:${t.line}`;
+      out.push(
+        `| [${esc(title)}](${where}) | **${cap(diagnosis.kind)}** (${diagnosis.confidence}): ${esc(diagnosis.summary)} | ${t.evidence.screenshot ? `[screenshot](${t.evidence.screenshot})` : "—"} |`,
+      );
     }
     out.push("");
   }
   const byCase = run.tests.filter((t) => t.caseId);
+  const failedCases = byCase.filter((t) => t.status === "failed" || t.status === "flaky").map((t) => t.caseId);
   if (byCase.length > 0) {
-    out.push("**Test cases:** " + byCase.map((t) => `${t.caseId} ${t.status}`).join(" · "), "");
+    out.push(`**Test cases:** ${byCase.length - failedCases.length} passed${failedCases.length > 0 ? `, ${failedCases.length} failed (${failedCases.join(", ")})` : ""}.`);
   }
-  const passed = run.tests.filter((t) => t.status === "passed").length;
-  if (passed > 0) out.push(`${count(passed, "test")} passed.`);
   return out.join("\n").trim();
 }
+
+/** What to do about each kind of failure, in one line. */
+const TODO: Record<Diagnosis["kind"], string> = {
+  "app bug": "report it as a bug in the app (explain drafts the report). Don't change the test to make it pass.",
+  "test bug": "fix the test (explain shows the change it needs).",
+  flaky: "find why it passes only sometimes (explain shows where to look).",
+  environment: "check that the app or service is running and reachable, then run again.",
+  unclear: "look at the screenshot and tell me what you see.",
+};
 
 function esc(s: string): string {
   return s.replace(/\|/g, "\\|").replace(/\n/g, " ");

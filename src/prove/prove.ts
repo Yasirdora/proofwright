@@ -10,7 +10,10 @@
  *      data, when asked); then one run with every answer late. Each runs only
  *      the files whose tests make that call, in the tester's usual way
  *      (their workers), with traces on, and a test stuck on a broken page is
- *      stopped sooner than the tester's own timeout allows.
+ *      stopped sooner than the tester's own timeout allows. And for a step a
+ *      test repeats (clicking "Apply" twice), a run of that test alone where
+ *      only the 2nd (3rd …) answer comes late with different numbers: a test
+ *      that checks the page before that answer arrives still passes.
  *   3. The verdicts (verdict.ts), with the evidence kept: a screenshot and a
  *      trace of each run where a test passed while its own call was broken.
  *
@@ -30,12 +33,14 @@ import {
   projectPath,
   type ReportedTest,
   reportedTests,
+  runnerProblem,
   selectionArgs,
   slugOf,
   stripAnsi,
 } from "../runs/runs.js";
+import { type TracedCall, tracedCalls } from "./trace.js";
 import { type Call, type Fault, type FaultKind, type FaultProxy, startProxy } from "./proxy.js";
-import { type CellEvidence, type CleanResult, type FaultRun, judge, type ProvenTest, type TestCall } from "./verdict.js";
+import { type CellEvidence, type CleanResult, type FaultRun, judge, type ProvenTest, type StepRef, type TestCall } from "./verdict.js";
 import { type Wrapper, findConfig, writeWrapper } from "./wrapper.js";
 
 export const DEFAULT_FAULTS: FaultKind[] = ["error", "empty", "slow"];
@@ -45,6 +50,11 @@ export const DEFAULT_SLOW_MS = 1000;
 const MIN_FAULT_TIMEOUT_MS = 10_000;
 /** Evidence kept per test, at most. */
 const MAX_EVIDENCE = 3;
+/** How many repeats of one step, per test, get a run of their own (the 2nd and 3rd). */
+const MAX_REPEATS = 2;
+
+/** A fault run: the fault, and — for a repeated step — the one test it's for. */
+type Planned = Fault & { test?: string };
 
 export interface ProveOptions {
   /** Test files or folders, as for Playwright's runner. */
@@ -78,6 +88,8 @@ export interface ProvedEndpoint {
 export interface ProofRun {
   kind: FaultKind;
   endpoints?: string[];
+  nth?: number;
+  test?: string;
   label: string;
   durationMs: number;
   /** Why the run gave no results, when it didn't. */
@@ -168,11 +180,13 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
     // ------------------------------------------------------------ 1. the clean run
     const selection = selectionArgs(options);
     progress("The clean run: your tests with nothing broken, one at a time", 0, 1);
-    const clean = await runner([...selection, "--workers=1", "--retries=0", "--forbid-only"], 60 * 60_000);
+    const clean = await runner([...selection, "--workers=1", "--retries=0", "--forbid-only", "--trace=on"], 60 * 60_000);
     if (w.info()?.ownProxy) {
       throw new ProjectError(`${project.relative(configFile)} sets a proxy of its own, so a proof can't put Proofwright's in front of it. Proving tests behind a proxy isn't supported yet.`);
     }
-    if (!clean.report) throw new ProjectError(`Playwright's runner didn't finish the clean run (${clean.problem}):\n${clean.output}`);
+    if (!clean.report) {
+      throw new ProjectError(runnerProblem(clean.full) ?? `Playwright's runner didn't finish the clean run (${clean.problem}):\n${clean.output}`);
+    }
     const focused = focusErrors(project, clean.report);
     if (focused.length > 0) {
       throw new ProjectError(
@@ -182,12 +196,34 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
     const reported = reportedTests(project, clean.report).filter((t) => !isSkipped(t));
     const skipped = reportedTests(project, clean.report).length - reported.length;
     if (reported.length === 0) {
-      const why = (clean.report.errors ?? []).map((e) => stripAnsi(e.message ?? "").split("\n")[0]).find(Boolean);
+      const errors = (clean.report.errors ?? []).map((e) => stripAnsi(e.message ?? ""));
+      const known = runnerProblem([...errors, clean.full].join("\n"));
+      if (known) throw new ProjectError(known);
+      const why = errors.map((e) => e.split("\n")[0]).find(Boolean);
       throw new ProjectError(`No tests ran${why ? `: ${why}` : ""}. Check the files, project or grep you named.`);
     }
 
     const cleanCalls = [...px.calls];
     const byTest = attribute(reported, cleanCalls);
+    // Which step made each call, from each test's trace (when it can be read).
+    const traced = new Map<string, TracedCall[]>();
+    const isTestFile = (abs: string) => {
+      const rel = project.relative(abs);
+      return !rel.startsWith("..") && !rel.split("/").includes("node_modules");
+    };
+    for (const t of reported) {
+      const trace = [...t.test.results].reverse().flatMap((r) => r.attachments ?? []).find((a) => a.name === "trace")?.path;
+      if (!trace || !fs.existsSync(trace)) continue;
+      try {
+        traced.set(t.id, tracedCalls(trace, isTestFile));
+      } catch {
+        // an unreadable trace: the calls are named instead
+      }
+    }
+    const stepOf = (testId: string, endpoint: string, nth: number): StepRef | undefined => {
+      const step = (traced.get(testId) ?? []).filter((c) => c.endpoint === endpoint)[nth - 1]?.step;
+      return step ? { name: step.name, at: `${project.relative(step.file)}:${step.line}` } : undefined;
+    };
     const api = cleanCalls.filter((c) => c.action || c.json);
     const mainHost = mostCommon(api.map((c) => c.host));
     const name = (endpoint: string) => {
@@ -217,11 +253,24 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
     const unmatched = filters.filter((f) => ![...endpointMap.values()].some((e) => matches(e, f)));
 
     // ------------------------------------------------------------ 2. the plan
-    const plan: Fault[] = [];
+    const plan: Planned[] = [];
     for (const e of endpoints) {
       if (faults.includes("error")) plan.push({ kind: "error", endpoints: [e.endpoint] });
       if (!e.action && e.lists && faults.includes("empty")) plan.push({ kind: "empty", endpoints: [e.endpoint] });
       if (!e.action && faults.includes("malformed")) plan.push({ kind: "malformed", endpoints: [e.endpoint] });
+    }
+    // A step a test repeats: the 2nd (3rd) answer late and changed, in a run of that test alone.
+    const chosen = new Set(endpoints.map((e) => e.endpoint));
+    for (const t of reported) {
+      const repeats = new Map<string, number>();
+      for (const c of byTest.get(t.id) ?? []) {
+        if (c.action && chosen.has(c.endpoint)) repeats.set(c.endpoint, (repeats.get(c.endpoint) ?? 0) + 1);
+      }
+      for (const [endpoint, n] of repeats) {
+        for (let nth = 2; nth <= Math.min(n, 1 + MAX_REPEATS); nth++) {
+          plan.push({ kind: "changed", endpoints: [endpoint], nth, delayMs: slowMs, test: t.id });
+        }
+      }
     }
     if (faults.includes("slow") && endpoints.length > 0) {
       plan.push({ kind: "slow", delayMs: slowMs, ...(filters.length > 0 ? { endpoints: endpoints.map((e) => e.endpoint) } : {}) });
@@ -277,16 +326,25 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
       const allFiles = [...new Set(reported.map((t) => t.file))];
       const limitMs = Math.max(10 * 60_000, 5 * cleanMs);
       const kept = new Map<string, number>();
+      const lineOf = new Map(reported.map((t) => [t.id, t.spec.line]));
+      const cleanPassed = new Set(cleanResults.filter((c) => c.status === "passed" && !c.expectedToFail).map((c) => c.id));
+      const titleOf = new Map(reported.map((t) => [t.id, t.title]));
       for (const [i, fault] of plan.entries()) {
-        const label = faultLabel(fault, name, slowMs);
+        const label = faultLabel(fault, name, slowMs, stepOf, titleOf);
         progress(`Run ${i + 1} of ${plan.length}: ${label}`, i + 1, plan.length + 1);
-        const calledBy = fault.endpoints ? endpoints.filter((e) => fault.endpoints!.includes(e.endpoint)).flatMap((e) => e.tests) : reported.map((t) => t.id);
+        const calledBy = fault.test
+          ? [fault.test]
+          : fault.endpoints
+            ? endpoints.filter((e) => fault.endpoints!.includes(e.endpoint)).flatMap((e) => e.tests)
+            : reported.map((t) => t.id);
         const files = fault.endpoints ? [...new Set(calledBy.map((tid) => filesOf.get(tid)!))] : allFiles;
-        px.fault = fault;
+        const { test: only, ...proxyFault } = fault;
+        px.fault = proxyFault;
+        const before = px.calls.length;
         const started = Date.now();
         const r = await runner(
           [
-            ...files.map(fileFilter),
+            ...(only ? [`${fileFilter(filesOf.get(only)!)}:${lineOf.get(only)}`] : files.map(fileFilter)),
             ...(options.project ? ["--project", options.project] : []),
             ...(options.grep ? ["--grep", options.grep] : []),
             "--retries=0",
@@ -296,9 +354,12 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
           limitMs,
         );
         px.fault = undefined;
+        const applied = px.calls.slice(before).some((c) => c.broken !== undefined);
         proof.runs.push({
           kind: fault.kind,
           ...(fault.endpoints ? { endpoints: fault.endpoints } : {}),
+          ...(fault.nth ? { nth: fault.nth } : {}),
+          ...(only ? { test: only } : {}),
           label,
           durationMs: Date.now() - started,
           ...(r.report ? {} : { problem: r.problem }),
@@ -310,9 +371,16 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
           const passed = lastWith(t.test.results, (x) => x.status === "passed");
           const attempts = t.test.results.map((x) => x.status);
           const own = calledBy.includes(t.id);
-          // Evidence of what matters: a test passing while its own call was broken,
-          // or failing when answers were only late.
-          const worth = (own && fault.kind !== "slow" && passed) || (fault.kind === "slow" && failed && !passed);
+          // Evidence of what decides a verdict: a test passing while its own step was
+          // broken (an action's call failing, or a repeat's answers late and different —
+          // or any call, for a test that makes no actions), or failing when answers were
+          // only late. A background read it didn't need isn't worth a screenshot.
+          const decides =
+            fault.kind === "changed" ||
+            (fault.kind === "error" && fault.endpoints!.some((e) => endpointMap.get(e)?.action)) ||
+            !(callsOf.get(t.id) ?? []).some((c) => c.action);
+          // …and only from a run that broke something, for a test that passed with nothing broken.
+          const worth = applied && cleanPassed.has(t.id) && ((own && fault.kind !== "slow" && passed && decides) || (fault.kind === "slow" && failed && !passed));
           const n = kept.get(t.id) ?? 0;
           let evidence: CellEvidence | undefined;
           if (worth && n < MAX_EVIDENCE) {
@@ -326,12 +394,19 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
             ...(evidence ? { evidence } : {}),
           };
         }
-        faultRuns.push({ kind: fault.kind, ...(fault.endpoints ? { endpoints: fault.endpoints } : {}), results });
+        faultRuns.push({
+          kind: fault.kind,
+          ...(fault.endpoints ? { endpoints: fault.endpoints } : {}),
+          ...(fault.nth ? { nth: fault.nth } : {}),
+          ...(only ? { test: only } : {}),
+          applied,
+          results,
+        });
         fs.rmSync(r.outputDir, { recursive: true, force: true });
       }
     }
 
-    proof.tests = judge(cleanResults, faultRuns, { name, limited: filters.length > 0 });
+    proof.tests = judge(cleanResults, faultRuns, { name, step: stepOf, limited: filters.length > 0 });
     proof.https = {
       opened: [...new Set(px.calls.filter((c) => c.https).map((c) => c.host))].sort(),
       passedThrough: [...px.passedThrough].sort(),
@@ -362,8 +437,10 @@ export function faultTimeoutFor(longestTestMs: number, ownTimeoutMs: number): nu
 
 interface RunnerResult {
   report?: PlaywrightReport;
-  /** The end of what the runner printed, for when it went wrong. */
+  /** The last lines the runner printed, for when it went wrong. */
   output: string;
+  /** More of what it printed, to recognise a known problem in. */
+  full: string;
   problem?: string;
 }
 
@@ -402,6 +479,7 @@ function runTests(
       resolve({
         ...(report && !timedOut ? { report } : {}),
         output: tail,
+        full: stripAnsi(output),
         ...(timedOut
           ? { problem: `stopped after ${Math.round(limitMs / 60_000)} min` }
           : report
@@ -455,14 +533,26 @@ function fileFilter(file: string): string {
   return `(^|/)${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
-function faultLabel(fault: Fault, name: (e: string) => string, slowMs: number): string {
+function faultLabel(
+  fault: Planned,
+  name: (e: string) => string,
+  slowMs: number,
+  stepOf: (testId: string, endpoint: string, nth: number) => StepRef | undefined,
+  titleOf: Map<string, string>,
+): string {
   if (fault.kind === "slow") return `every answer ${slowMs >= 1000 ? `${slowMs / 1000} s` : `${slowMs} ms`} late`;
   const e = name(fault.endpoints![0]);
+  if (fault.kind === "changed" && fault.test) {
+    const step = stepOf(fault.test, fault.endpoints![0], fault.nth ?? 2);
+    const what = step ? (/^click (".*")$/.exec(step.name)?.[1] ?? step.name) : e;
+    return `"${titleOf.get(fault.test)}": the answers to the ${fault.nth === 3 ? "3rd" : `${fault.nth}nd`} ${what} come late and different`;
+  }
   return fault.kind === "error" ? `${e} fails with a server error` : fault.kind === "empty" ? `${e} answers with empty lists` : `${e} answers with broken data`;
 }
 
-function faultSlug(fault: Fault, name: (e: string) => string): string {
-  return fault.kind === "slow" ? "slow" : `${fault.kind}-${slugOf(name(fault.endpoints![0]))}`;
+function faultSlug(fault: Planned, name: (e: string) => string): string {
+  if (fault.kind === "slow") return "slow";
+  return `${fault.kind}${fault.nth ? `-${fault.nth}` : ""}-${slugOf(name(fault.endpoints![0]))}`;
 }
 
 function shortId(testId: string): string {

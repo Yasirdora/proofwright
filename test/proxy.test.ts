@@ -13,7 +13,7 @@ import * as path from "node:path";
 import test from "node:test";
 import * as tls from "node:tls";
 import * as zlib from "node:zlib";
-import { emptied, endpointOf, type FaultProxy, hasList, isJson, startProxy } from "../src/prove/proxy.js";
+import { emptied, endpointOf, type FaultProxy, hasList, isJson, renumbered, startProxy } from "../src/prove/proxy.js";
 
 test("endpoints: ids in the path become :id; the rest stays", () => {
   assert.equal(endpointOf("GET", "127.0.0.1:4610", "/api/orders/PW-1042"), "GET 127.0.0.1:4610/api/orders/:id");
@@ -24,6 +24,30 @@ test("endpoints: ids in the path become :id; the rest stays", () => {
   assert.ok(!isJson("application/x-ndjson") && !isJson("text/html"));
   assert.deepEqual(emptied({ items: [1, 2], total: 2, nested: { tags: ["a"] } }), { items: [], total: 2, nested: { tags: [] } });
   assert.ok(hasList({ a: { b: [] } }) && !hasList({ a: 1 }));
+  assert.deepEqual(renumbered({ discountCents: 120, lines: [{ qty: 1, name: "Blue mug" }], ok: true }), { discountCents: 121, lines: [{ qty: 2, name: "Blue mug" }], ok: true });
+  assert.equal(renumbered({ error: "This coupon code isn't valid" }), undefined, "nothing to change");
+});
+
+test("proxy: a repeated step — its 2nd answer and every answer after it come late and different; the 1st doesn't", async () => {
+  const app = await startApp();
+  const proxy = await startProxy({ https: false });
+  try {
+    const base = `http://127.0.0.1:${app.port}`;
+    proxy.fault = { kind: "changed", endpoints: [`POST 127.0.0.1:${app.port}/api/items`], nth: 2, delayMs: 300 };
+    const first = await viaProxy(proxy, `${base}/api/items`, "POST");
+    assert.deepEqual([JSON.parse(first.body), first.totalMs < 250], [{ ok: true }, true], "the 1st is untouched");
+    assert.deepEqual(JSON.parse((await viaProxy(proxy, `${base}/api/items`)).body), { items: [1, 2], total: 2 }, "nor what comes between");
+    const second = await viaProxy(proxy, `${base}/api/items`, "POST");
+    assert.deepEqual(JSON.parse(second.body), { ok: true }, "no number to change in it: passed on as it is");
+    const after = await viaProxy(proxy, `${base}/api/items`);
+    assert.deepEqual(JSON.parse(after.body), { items: [2, 3], total: 3 }, "what the app reloads after it is changed");
+    assert.ok(after.totalMs >= 290, `and late: ${after.totalMs} ms`);
+    assert.ok((await viaProxy(proxy, `${base}/page`)).totalMs < 250, "pages aren't touched");
+    assert.deepEqual(proxy.calls.filter((c) => c.broken).map((c) => c.endpoint.split(" ")[0]), ["GET"]);
+  } finally {
+    await proxy.close();
+    app.close();
+  }
 });
 
 // ---------------------------------------------------------------- a small app

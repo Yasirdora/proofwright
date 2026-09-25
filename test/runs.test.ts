@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -6,7 +7,7 @@ import test from "node:test";
 import { renderAnswer } from "../src/answer.js";
 import { Project, ProjectError } from "../src/project.js";
 import { classify } from "../src/runs/classify.js";
-import { compare, type Run, type RunTest } from "../src/runs/runs.js";
+import { compare, type Run, type RunTest, runnerProblem } from "../src/runs/runs.js";
 import { explain, report } from "../src/runs/tools.js";
 import { demoCopy, freePort } from "./fixtures.js";
 
@@ -51,7 +52,9 @@ test("report runs Playwright's runner and names every failure the way the answer
     const second = report(project, { run: { project: "failures" } });
     assert.match(second.headline, /— 0 new failures, 0 fixed since the last run\.$/);
     assert.equal(second.data.previous, first.data.run.id);
-    assert.match(second.found, /Still failing: "SAVE10 on a notebook/);
+    assert.match(second.found, /^\*\*Since the last run\*\*: no new failures; 6 still failing\.$/m);
+    assert.ok(second.need.some((n) => n.startsWith('"SAVE10 on a notebook rounds to the nearest cent": report it as a bug in the app')));
+    assert.ok(second.need.some((n) => n.includes("Don't change the test to make it pass")));
   } finally {
     delete process.env.SHOP_PORT;
   }
@@ -74,6 +77,27 @@ test("report says when a test.only let only part of the selection run", async ()
   } finally {
     delete process.env.SHOP_PORT;
   }
+});
+
+test("report: when the app's address is already in use, it says so plainly — and how to find out by what", async () => {
+  const project = demoCopy(["demo/failures"]);
+  const port = await freePort();
+  // Another process answering on the shop's address, as a shop left running by Playwright's generator does.
+  const holder = spawn(process.execPath, ["-e", `require("http").createServer((q, r) => r.end("ok")).listen(${port}, "127.0.0.1", () => console.log("ready"))`], { stdio: ["ignore", "pipe", "inherit"] });
+  await new Promise((resolve) => holder.stdout!.once("data", resolve));
+  process.env.SHOP_PORT = port;
+  try {
+    assert.throws(
+      () => report(project, { run: { project: "failures" } }),
+      (e: unknown) =>
+        e instanceof ProjectError &&
+        e.message === `The app's address http://127.0.0.1:${port}/api/health is already in use, so Playwright couldn't start the app. It's probably still running from an earlier session (for example Playwright's generator). Stop it, then ask again. On macOS or Linux, \`lsof -i :${port}\` shows what is using it.`,
+    );
+  } finally {
+    holder.kill();
+    delete process.env.SHOP_PORT;
+  }
+  assert.equal(runnerProblem("Error: something else entirely"), undefined);
 });
 
 // ---------------------------------------------------------------- the rules, one by one
@@ -191,13 +215,13 @@ test("report from a CI JSON report; explain ties an approved case's failure to i
   const r = report(project, { from: "ci-report.json" });
   assert.equal(r.headline, "1 test: 0 passed, 1 failed, 0 flaky.");
   assert.ok(r.did[0].startsWith("Read Playwright's JSON report `ci-report.json`"));
-  assert.match(r.found, /\*\*Test cases:\*\* TC-001 failed/);
+  assert.match(r.found, /\*\*Test cases:\*\* 0 passed, 1 failed \(TC-001\)\./);
 
   const e = explain(project, { test: "TC-001" });
   assert.equal(e.data.diagnosis.kind, "app bug");
   assert.equal(e.data.diagnosis.confidence, "likely");
   assert.match(e.data.bugDraft ?? "", /Steps: see TC-001 in `proofwright\/cases\/coupons\.md`\./);
-  assert.match(renderAnswer(e), /### What I need from you\n1\. File the bug/);
+  assert.match(renderAnswer(e), /\*\*What to do\*\*\nFile the bug/);
 
   assert.throws(() => report(project, { from: "nope.json" }), ProjectError);
   fs.writeFileSync(path.join(dir, "junk.json"), "{}");

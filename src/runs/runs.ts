@@ -80,11 +80,28 @@ export function runPlaywright(project: Project, opts: RunOptions = {}): Run {
   const focused = focusedTests(project, opts);
   const args = ["--no-install", "playwright", "test", ...selectionArgs(opts), "--reporter=json", "--trace=retain-on-failure"];
   const { report, child } = spawnForReport(project, args, (opts.timeoutMinutes ?? 15) * 60_000);
+  const output = stripAnsi(`${child.stderr ?? ""}${child.stdout ?? ""}`);
+  // Playwright writes a report even when it couldn't run anything: its errors are in it.
+  const known = runnerProblem([...(report?.errors ?? []).map((e) => e.message ?? ""), output].join("\n"));
+  if (known && (!report || reportedTests(project, report).length === 0)) throw new ProjectError(known);
   if (!report) {
-    const why = child.error?.message ?? stripAnsi(`${child.stderr ?? ""}${child.stdout ?? ""}`).trim().split("\n").slice(-6).join("\n");
+    const why = child.error?.message ?? output.trim().split("\n").slice(-6).join("\n");
     throw new ProjectError(`Playwright's runner didn't produce a report (${child.status === null ? "it was stopped" : `exit ${child.status}`}):\n${why}`);
   }
   return record(project, report, { ran: ["npx", "playwright", "test", ...args.slice(3)] }, focused);
+}
+
+/**
+ * What went wrong when Playwright's runner couldn't run the tests at all, in
+ * words a tester can act on — or undefined when it's nothing Proofwright knows.
+ */
+export function runnerProblem(output: string): string | undefined {
+  const busy = /Error: (\S+) is already used, make sure that nothing is running on the port\/url/.exec(stripAnsi(output));
+  if (busy) {
+    const port = /:(\d+)(?:\/|$)/.exec(busy[1])?.[1];
+    return `The app's address ${busy[1]} is already in use, so Playwright couldn't start the app. It's probably still running from an earlier session (for example Playwright's generator). Stop it, then ask again.${port ? ` On macOS or Linux, \`lsof -i :${port}\` shows what is using it.` : ""}`;
+  }
+  return undefined;
 }
 
 /**

@@ -17,20 +17,21 @@ test("prove on demo/colleague/checkout.spec.ts gives the answer key's verdicts",
     const answer = await proveTool(project, { paths: ["demo/colleague/checkout.spec.ts"], project: "colleague" }, (m) => process.stderr.write(`${m}\n`));
     const verdict = Object.fromEntries(answer.data.tests.map((t) => [t.title, t.verdict]));
     assert.deepEqual(verdict, {
-      "user can sign up": "passes when its own action fails",
-      "add to cart works": "passes when its own action fails",
-      "coupon works": "passes when its own action fails",
+      "user can sign up": "misses its own action",
+      "add to cart works": "misses its own action",
+      "coupon works": "misses its own action",
       checkout: "catches",
       "order number is shown": "not proven",
       "recommendations › recommendations load": "not proven",
     });
-    const own = (title: string) => answer.data.tests.find((t) => t.title === title)!.reason;
-    assert.equal(own("user can sign up"), "It still passes when POST /api/signup fails with a server error.");
-    assert.equal(own("add to cart works"), "It still passes when POST /api/cart/items fails with a server error.");
-    assert.equal(own("coupon works"), "It still passes when POST /api/cart/coupon fails with a server error.");
-    assert.match(own("checkout"), /^It fails when POST \/api\/login fails with a server error; POST \/api\/orders fails with a server error/);
-    assert.match(own("checkout"), /It also fails when POST \/api\/signup fails with a server error, a call it doesn't make: it depends on another test\.$/);
-    assert.match(own("recommendations › recommendations load"), /it's flaky/);
+    const own = (title: string) => answer.data.tests.find((t) => t.title === title)!.result;
+    assert.equal(own("user can sign up"), 'Stays green when "Create account" (checkout.spec.ts:16) fails.');
+    assert.equal(own("add to cart works"), 'Stays green when "#app > ul > li:nth-child(1) > button" (checkout.spec.ts:22) fails.');
+    assert.equal(own("coupon works"), 'Stays green when "Apply" (checkout.spec.ts:30) fails.');
+    assert.match(own("checkout"), /^Fails when "Log in" fails, or when "Place order" fails/);
+    assert.match(own("checkout"), /It also fails when POST \/api\/signup fails, a call it doesn't make: it depends on another test\.$/);
+    // Its first tries fail about half the time: with nothing broken it's flaky — or, now and then, fails every try.
+    assert.match(own("recommendations › recommendations load"), /passes and fails at random|already fails with nothing broken/);
     process.stdout.write(`\n${answer.headline}\n`);
   } finally {
     delete process.env.SHOP_PORT;
