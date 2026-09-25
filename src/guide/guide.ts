@@ -11,7 +11,10 @@
  *   3 Approval    every case approved or left out, no question open
  *   4 Tests       the approved plan's test files exist
  *   5 Review      review finds nothing in them (it's read-only and quick)
- *   6 Prove       a proof of those files, newer than they are
+ *   6 Prove       a proof of those files as they are now: the proof keeps each
+ *                 file's fingerprint, so a file rewritten with the same text (by
+ *                 git, a copy, another tool) is still proven. Older proofs have
+ *                 no fingerprints: for them, a file newer than the proof changed.
  *
  * The next step is the first one that isn't done — except review, which is
  * advice: it's listed, and the guide moves on to prove.
@@ -22,6 +25,7 @@ import { type Answer, count } from "../answer.js";
 import type { Project } from "../project.js";
 import { buildCases, type CaseLedger } from "../plan/cases.js";
 import { parsePlan } from "../plan/playwright-plan.js";
+import { fingerprint } from "../prove/prove.js";
 import { review } from "../review/review.js";
 
 export type StepState = "done" | "to do" | "attention";
@@ -147,11 +151,10 @@ function sessionOf(project: Project, planRel: string): GuideSession {
 
   // 6 — the latest proof of these tests, if it's newer than they are.
   const proof = written.length > 0 ? latestProof(project, written) : undefined;
-  const newest = Math.max(0, ...written.map((f) => fs.statSync(path.join(project.root, f)).mtimeMs));
   if (!proof) {
     steps.push({ name: "Prove", state: "to do", note: "" });
     if (written.length > 0) todo('Prove the tests can fail (it takes a few minutes): say "prove the tests".');
-  } else if (proof.at < newest) {
+  } else if (written.some((f) => changedSince(project, f, proof))) {
     steps.push({ name: "Prove", state: "attention", note: "the tests changed since" });
     todo('The tests changed since they were proven: say "prove the tests" again.');
   } else {
@@ -173,14 +176,29 @@ function sessionOf(project: Project, planRel: string): GuideSession {
   return { feature: plan.name, plan: planRel, steps, next, also, updatedAt: Math.max(...touched) };
 }
 
+interface LatestProof {
+  at: number;
+  verdicts: string[];
+  failing: number;
+  /** Each proven file's fingerprint; absent in proofs made before fingerprints were kept. */
+  files?: Record<string, string>;
+}
+
+/** The test file changed since the proof — or wasn't in it. */
+function changedSince(project: Project, file: string, proof: LatestProof): boolean {
+  const abs = path.join(project.root, file);
+  if (!proof.files) return fs.statSync(abs).mtimeMs > proof.at;
+  return proof.files[file] !== fingerprint(abs);
+}
+
 /** The newest proof that proved any of these test files: its verdicts, and how many failed with nothing broken. */
-function latestProof(project: Project, files: string[]): { at: number; verdicts: string[]; failing: number } | undefined {
+function latestProof(project: Project, files: string[]): LatestProof | undefined {
   const dir = path.join(project.root, "proofwright/runs/proofs");
   if (!fs.existsSync(dir)) return undefined;
   for (const id of fs.readdirSync(dir).sort().reverse()) {
     const file = path.join(dir, id, "proof.json");
     if (!fs.existsSync(file)) continue;
-    let proof: { startedAt?: string; tests?: Array<{ file: string; verdict: string; result: string }> };
+    let proof: { startedAt?: string; files?: Record<string, string>; tests?: Array<{ file: string; verdict: string; result: string }> };
     try {
       proof = JSON.parse(fs.readFileSync(file, "utf8"));
     } catch {
@@ -192,6 +210,7 @@ function latestProof(project: Project, files: string[]): { at: number; verdicts:
       at: Date.parse(proof.startedAt ?? "") || fs.statSync(file).mtimeMs,
       verdicts: mine.map((t) => t.verdict),
       failing: mine.filter((t) => t.verdict === "not proven" && /already fails with nothing broken/.test(t.result)).length,
+      ...(proof.files ? { files: proof.files } : {}),
     };
   }
   return undefined;

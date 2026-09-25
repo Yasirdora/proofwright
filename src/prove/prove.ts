@@ -22,10 +22,11 @@
  * folder of the proof's own, so test-results/ is left as it was.
  */
 import { type ChildProcess, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { type Project, ProjectError } from "../project.js";
+import { type Project, ProjectError, STATE_DIR } from "../project.js";
 import {
   focusErrors,
   type PlaywrightReport,
@@ -117,6 +118,12 @@ export interface Proof {
   faultTimeoutMs?: number;
   longestTestMs: number;
   https: { opened: string[]; passedThrough: string[]; untrusted: string[] };
+  /**
+   * Each proven test file's fingerprint (sha256 of its text), project-relative. A later
+   * change is seen by what's in the file, not by its time: a file rewritten with the same
+   * text (by git, a copy, another tool) is still proven.
+   */
+  files: Record<string, string>;
   tests: ProvenTest[];
   /** Set when the proof stopped before breaking anything. */
   stopped?: { needed: number; maxRuns: number };
@@ -134,7 +141,8 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
 
   const startedAt = new Date().toISOString();
   const id = startedAt.replace(/[:.]/g, "-").replace(/Z$/, "");
-  const dir = path.dirname(project.stateFile("runs", "proofs", id, "proof.json"));
+  // Made when there's something to keep: a proof that stops at the start leaves no folder.
+  const dir = path.join(project.root, STATE_DIR, "runs", "proofs", id);
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "proofwright-proof-"));
   const t0 = Date.now();
 
@@ -298,6 +306,7 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
       ...(faultTimeoutMs ? { faultTimeoutMs } : {}),
       longestTestMs,
       https: { opened: [], passedThrough: [], untrusted: [] },
+      files: fingerprints(project, reported.map((t) => t.file)),
       tests: [],
       dir: project.relative(dir),
     };
@@ -413,6 +422,7 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
       untrusted: [...px.untrusted].sort(),
     };
     proof.durationMs = Date.now() - t0;
+    fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "proof.json"), `${JSON.stringify(proof, null, 2)}\n`);
     return proof;
   } finally {
@@ -423,6 +433,24 @@ export async function prove(project: Project, options: ProveOptions = {}): Promi
 }
 
 // ---------------------------------------------------------------- helpers
+
+/** A file's fingerprint: the sha256 of its text. */
+export function fingerprint(file: string): string {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+/** The fingerprints of the test files a proof ran, by project-relative path. */
+function fingerprints(project: Project, files: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of [...new Set(files)].sort()) {
+    try {
+      out[f] = fingerprint(path.join(project.root, f));
+    } catch {
+      // gone since the clean run: nothing to compare with later
+    }
+  }
+  return out;
+}
 
 /**
  * The test timeout for fault runs: 3× the slowest clean test, at least 10 s —

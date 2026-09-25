@@ -451,3 +451,21 @@ MCP app, but that's untested.
   landed in the shop's own tests), and writes `.mcp.json` only when a server
   changes (it reformatted it).
 
+
+## 2026-09-25 · A proof remembers what it proved
+
+- **Changed since the proof is judged by what's in the files, not their
+  times.** The guide said "the tests changed since they were proven" when a
+  test file was newer than the proof. But a file can be written again with the
+  same text — a `git checkout` or stash, a copy, another tool putting files
+  back — and then every test looked changed: after one such rewrite all 17 of
+  the second walkthrough's tests did. A proof now keeps each test file's
+  fingerprint (the sha256 of its text, in `proof.json` as `files`); the guide
+  compares those, and a file the proof didn't run counts as not proven. Proofs
+  made before this have no fingerprints: for them the guide still compares
+  times. Which session the guide shows first still follows file times — it
+  only changes the order.
+- **A proof that stops at the start leaves no folder.** prove made its
+  `proofwright/runs/proofs/<id>/` folder before the clean run, so a proof
+  stopped by a busy port or a `test.only` left it empty. The folder is now
+  made when there's something to keep.

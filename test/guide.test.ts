@@ -2,6 +2,7 @@
  * The guide: where a test session is, read from what's saved, and the one next step.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -32,10 +33,17 @@ test("${title}", async ({ page }) => {
 });
 `;
 
-/** A proof of the given test files, as prove saves it. */
-function proof(p: Project, id: string, tests: Array<{ file: string; verdict: string; result?: string }>, startedAt = new Date().toISOString()) {
-  write(p, `proofwright/runs/proofs/${id}/proof.json`, JSON.stringify({ id, startedAt, tests: tests.map((t) => ({ title: t.file, line: 1, result: "", ...t })) }));
+/** A proof of the given test files, as prove saves it — with each file's fingerprint when given (older proofs have none). */
+function proof(
+  p: Project,
+  id: string,
+  tests: Array<{ file: string; verdict: string; result?: string }>,
+  startedAt = new Date().toISOString(),
+  files?: Record<string, string>,
+) {
+  write(p, `proofwright/runs/proofs/${id}/proof.json`, JSON.stringify({ id, startedAt, ...(files ? { files } : {}), tests: tests.map((t) => ({ title: t.file, line: 1, result: "", ...t })) }));
 }
+const sha256 = (p: Project, rel: string) => createHash("sha256").update(fs.readFileSync(path.join(p.root, rel))).digest("hex");
 
 test("guide: with nothing yet, it says how to start", () => {
   const a = guide(project());
@@ -124,4 +132,33 @@ test("guide: several sessions — the latest first, the others with their next s
   // A file in specs/ that isn't a plan Playwright wrote is passed over.
   write(p, "specs/notes.plan.md", "# not a plan\n");
   assert.equal(guide(p).data.sessions.length, 2);
+});
+
+test("guide: a file rewritten with the same text is still proven; an edit, or a file the proof didn't run, is not", async () => {
+  const p = project();
+  const two = structuredClone(COUPONS);
+  two.suites[0].tests.pop();
+  write(p, "specs/coupons.plan.md", renderPlan(two));
+  await approvePlan(p, { plan: "specs/coupons.plan.md" }, undefined, TODAY);
+  await approvePlan(p, { plan: "specs/coupons.plan.md", approve: ["TC-001", "TC-002"], words: "yes" }, undefined, TODAY);
+  const files = two.suites[0].tests.map((t) => t.file);
+  write(p, files[0], CLEAN_TEST("TC-001 · A valid coupon lowers the total"));
+  write(p, files[1], CLEAN_TEST("TC-002 · An expired coupon is refused"));
+  const prints = Object.fromEntries(files.map((f) => [f, sha256(p, f)]));
+  // Proven a minute ago; since then, a checkout or another tool wrote both files again, unchanged.
+  proof(p, "2026-09-25T11-00-00-000", files.map((file) => ({ file, verdict: "catches" })), new Date(Date.now() - 60_000).toISOString(), prints);
+  for (const f of files) write(p, f, fs.readFileSync(path.join(p.root, f), "utf8"));
+  let a = guide(p);
+  assert.match(a.found, /✅ Prove: 2 good/);
+  assert.equal(a.need[0], "Done. Test something else: `/proofwright <what to test>`.");
+
+  // An edit is a change.
+  fs.appendFileSync(path.join(p.root, files[0]), "// checks the total too\n");
+  a = guide(p);
+  assert.match(a.found, /⚠️ Prove: the tests changed since/);
+  assert.equal(a.need[0], 'The tests changed since they were proven: say "prove the tests" again.');
+
+  // A newer proof of only the first file: the second isn't proven as it is.
+  proof(p, "2026-09-25T12-00-00-000", [{ file: files[0], verdict: "catches" }], new Date().toISOString(), { [files[0]]: sha256(p, files[0]) });
+  assert.equal(guide(p).need[0], 'The tests changed since they were proven: say "prove the tests" again.');
 });

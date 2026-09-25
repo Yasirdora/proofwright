@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -194,6 +195,10 @@ test(`prove, over MCP: the coupon test stays green while "Apply" fails; checkout
     assert.ok(fs.existsSync(path.join(project.root, proof.reportFile)));
     assert.ok(fs.existsSync(path.join(project.root, proof.proofFile)));
     assert.match(fs.readFileSync(path.join(project.root, proof.reportFile), "utf8"), /## What each test noticed/);
+    // The proof keeps the fingerprint of the file it proved, so the guide can tell later whether it changed.
+    const saved = JSON.parse(fs.readFileSync(path.join(project.root, proof.proofFile), "utf8")) as { files: Record<string, string> };
+    const spec = "demo/colleague/checkout.spec.ts";
+    assert.deepEqual(saved.files, { [spec]: createHash("sha256").update(fs.readFileSync(path.join(project.root, spec))).digest("hex") });
 
     // Where it was, as it went: the clean run, then each fault run.
     assert.deepEqual(heard.map((p) => p.progress), [0, 1, 2, 3]);
@@ -270,6 +275,7 @@ test("prove: when the app's address is already in use, it says so plainly", asyn
       (e: unknown) => e instanceof ProjectError && e.message.startsWith(`The app's address http://127.0.0.1:${port}/api/health is already in use, so Playwright couldn't start the app.`),
     );
     assert.ok(!fs.existsSync(path.join(project.root, WRAPPER_NAME)), "the temporary config is gone");
+    assert.ok(!fs.existsSync(path.join(project.root, "proofwright/runs/proofs")), "no empty proof folder is left behind");
   } finally {
     holder.kill();
     delete process.env.SHOP_PORT;
@@ -284,6 +290,7 @@ test("prove, over MCP: a test.only stops the proof and is named", async () => {
     assert.equal((r as { isError?: boolean }).isError, true);
     assert.match(text(r), /Playwright stopped: `test\.only` at demo\/colleague\/wip\.spec\.ts:3 would narrow the proof to that test/);
     assert.ok(!fs.existsSync(path.join(project.root, WRAPPER_NAME)));
+    assert.ok(!fs.existsSync(path.join(project.root, "proofwright/runs/proofs")), "no empty proof folder is left behind");
     const bad = await client.callTool({ name: "prove", arguments: { faults: ["on-fire"] } });
     assert.match(text(bad), /"on-fire" isn't a fault Proofwright knows: error, empty, malformed, slow\./);
   } finally {
